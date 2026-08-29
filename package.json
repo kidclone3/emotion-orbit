@@ -4,16 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server.mjs --dev",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "node server.mjs",
     "test": "node --test"
   },
   "devDependencies": {
     "vite": "^8.2.2"
   },
   "dependencies": {
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "ws": "^8.21.3"
   },
   "description": "An interactive 3D emotion-to-color experience"
 }

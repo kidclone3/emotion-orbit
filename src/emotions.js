@@ -10,6 +10,7 @@ export const EMOTIONS = {
     turbulence: 1.15,
     orbitSpeed: 0.42,
     particleSize: 3.4,
+    shape: -0.08,
     copy: 'Bright, buoyant, and impossible to hold still.',
   },
   calm: {
@@ -23,6 +24,7 @@ export const EMOTIONS = {
     turbulence: 0.28,
     orbitSpeed: 0.12,
     particleSize: 2.2,
+    shape: 0.02,
     copy: 'A slow tide with room between every thought.',
   },
   love: {
@@ -36,6 +38,7 @@ export const EMOTIONS = {
     turbulence: 0.55,
     orbitSpeed: 0.24,
     particleSize: 3,
+    shape: -0.04,
     copy: 'Warm gravity drawing everything a little closer.',
   },
   wonder: {
@@ -49,6 +52,7 @@ export const EMOTIONS = {
     turbulence: 0.88,
     orbitSpeed: 0.3,
     particleSize: 2.7,
+    shape: 0.18,
     copy: 'The electric pause before the unknown opens.',
   },
   anger: {
@@ -62,6 +66,7 @@ export const EMOTIONS = {
     turbulence: 1.72,
     orbitSpeed: 0.64,
     particleSize: 3.8,
+    shape: -0.22,
     copy: 'Heat, velocity, and a boundary asking to be heard.',
   },
   melancholy: {
@@ -75,6 +80,7 @@ export const EMOTIONS = {
     turbulence: 0.42,
     orbitSpeed: 0.08,
     particleSize: 1.9,
+    shape: 0.1,
     copy: 'Blue weight drifting softly through remembered light.',
   },
 }
@@ -119,4 +125,107 @@ export function resolveEmotion(input) {
   }
 
   return null
+}
+
+const FEELING_WEIGHTS = {
+  anxious: { wonder: 0.6, anger: 0.25, melancholy: 0.15 },
+  anxiety: { wonder: 0.6, anger: 0.25, melancholy: 0.15 },
+  afraid: { melancholy: 0.5, wonder: 0.3, anger: 0.2 },
+  scared: { melancholy: 0.5, wonder: 0.3, anger: 0.2 },
+  nervous: { wonder: 0.55, melancholy: 0.3, anger: 0.15 },
+  overwhelmed: { melancholy: 0.45, anger: 0.35, wonder: 0.2 },
+  guarded: { anger: 0.45, melancholy: 0.35, wonder: 0.2 },
+  unsure: { wonder: 0.7, melancholy: 0.3 },
+  uncertain: { wonder: 0.7, melancholy: 0.3 },
+  confused: { wonder: 0.65, melancholy: 0.35 },
+  hopeful: { joy: 0.75, wonder: 0.25 },
+  grateful: { joy: 0.65, love: 0.35 },
+  proud: { joy: 0.8, love: 0.2 },
+  connected: { love: 0.8, calm: 0.2 },
+  tender: { love: 0.75, calm: 0.25 },
+  okay: { calm: 1 },
+  grounded: { calm: 1 },
+  disappointed: { melancholy: 1 },
+  disappointment: { melancholy: 1 },
+  fail: { melancholy: 1 },
+  failed: { melancholy: 1 },
+  failing: { melancholy: 1 },
+  failure: { melancholy: 1 },
+  tired: { melancholy: 0.75, calm: 0.25 },
+  empty: { melancholy: 1 },
+  grief: { melancholy: 1 },
+  grieving: { melancholy: 1 },
+  depressed: { melancholy: 1 },
+  resentful: { anger: 0.8, melancholy: 0.2 },
+  annoyed: { anger: 1 },
+  mad: { anger: 1 },
+}
+
+function addWeight(scores, weights) {
+  for (const [emotion, weight] of Object.entries(weights)) {
+    scores[emotion] += weight
+  }
+}
+
+function blendHex(scores, total, property) {
+  const channels = [0, 0, 0]
+
+  for (const emotion of EMOTION_ORDER) {
+    if (scores[emotion] === 0) continue
+    const value = Number.parseInt(EMOTIONS[emotion][property].slice(1), 16)
+    channels[0] += ((value >> 16) & 255) * scores[emotion]
+    channels[1] += ((value >> 8) & 255) * scores[emotion]
+    channels[2] += (value & 255) * scores[emotion]
+  }
+
+  return `#${channels
+    .map((channel) => Math.round(channel / total).toString(16).padStart(2, '0'))
+    .join('')}`
+}
+
+function blendNumber(scores, total, property) {
+  return EMOTION_ORDER.reduce(
+    (sum, emotion) => sum + EMOTIONS[emotion][property] * scores[emotion],
+    0,
+  ) / total
+}
+
+export function analyzeEmotionMessage(input) {
+  const words = input.toLowerCase().match(/[a-z]+/g) ?? []
+  const scores = Object.fromEntries(EMOTION_ORDER.map((emotion) => [emotion, 0]))
+
+  for (const word of words) {
+    if (EMOTIONS[word]) {
+      scores[word] += 1
+    } else if (ALIASES[word]) {
+      scores[ALIASES[word]] += 1
+    } else if (FEELING_WEIGHTS[word]) {
+      addWeight(scores, FEELING_WEIGHTS[word])
+    }
+  }
+
+  const total = Object.values(scores).reduce((sum, score) => sum + score, 0)
+  if (total === 0) {
+    return { matched: false, dominant: null, visual: null }
+  }
+
+  const dominant = EMOTION_ORDER.reduce((strongest, emotion) =>
+    scores[emotion] > scores[strongest] ? emotion : strongest,
+  )
+
+  return {
+    matched: true,
+    dominant,
+    visual: {
+      primary: blendHex(scores, total, 'primary'),
+      accent: blendHex(scores, total, 'accent'),
+      background: blendHex(scores, total, 'background'),
+      glow: blendHex(scores, total, 'glow'),
+      energy: blendNumber(scores, total, 'energy'),
+      turbulence: blendNumber(scores, total, 'turbulence'),
+      orbitSpeed: blendNumber(scores, total, 'orbitSpeed'),
+      particleSize: blendNumber(scores, total, 'particleSize'),
+      shape: blendNumber(scores, total, 'shape'),
+    },
+  }
 }
