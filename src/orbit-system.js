@@ -9,6 +9,39 @@ function seededRandom(seed) {
   }
 }
 
+export function createOrbitalDustField({
+  count = 900,
+  seed = 9127,
+  innerRadius = 2.18,
+  outerRadius = 4.75,
+} = {}) {
+  if (!Number.isInteger(count) || count < 1) throw new RangeError('count must be a positive integer')
+  if (![innerRadius, outerRadius].every((value) => Number.isFinite(value) && value > 0)
+    || outerRadius <= innerRadius) {
+    throw new RangeError('orbital dust radii must be finite, positive, and ordered')
+  }
+
+  const random = seededRandom(seed)
+  const positions = new Float32Array(count * 3)
+  const radii = new Float32Array(count)
+  const seeds = new Float32Array(count)
+
+  for (let index = 0; index < count; index += 1) {
+    const radiusMix = Math.pow(random(), 1.55)
+    const radius = innerRadius + (outerRadius - innerRadius) * radiusMix
+    const angle = random() * Math.PI * 2
+    const inclination = (random() - 0.5) * (0.28 + radiusMix * 0.42)
+    const offset = index * 3
+    positions[offset] = Math.cos(angle) * radius
+    positions[offset + 1] = Math.sin(inclination) * radius * 0.62
+    positions[offset + 2] = Math.sin(angle) * radius
+    radii[index] = radius
+    seeds[index] = random()
+  }
+
+  return { positions, radii, seeds }
+}
+
 export function createOrganicFormGeometry({
   columns = 24,
   rows = 18,

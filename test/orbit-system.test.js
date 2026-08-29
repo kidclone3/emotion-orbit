@@ -1,6 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createOrganicFormGeometry, createOrbitPath } from '../src/orbit-system.js'
+import { createOrbitalDustField, createOrganicFormGeometry, createOrbitPath } from '../src/orbit-system.js'
+
+test('creates deterministic bounded orbital dust with per-particle motion data', () => {
+  const options = { count: 640, seed: 9127, innerRadius: 2.18, outerRadius: 4.75 }
+  const first = createOrbitalDustField(options)
+  const second = createOrbitalDustField(options)
+
+  assert.deepEqual(first.positions, second.positions)
+  assert.deepEqual(first.seeds, second.seeds)
+  assert.deepEqual(first.radii, second.radii)
+  assert.equal(first.positions.length, options.count * 3)
+  assert.equal(first.seeds.length, options.count)
+  assert.equal(first.radii.length, options.count)
+  assert.ok(first.positions.every(Number.isFinite))
+  assert.ok(first.radii.every((radius) => radius >= options.innerRadius && radius <= options.outerRadius))
+})
 
 test('creates a deterministic organic cloth surface with a tapered asymmetric silhouette', () => {
   const options = { columns: 18, rows: 12, seed: 73, width: 1.4, height: 1.1, depth: 0.24 }
