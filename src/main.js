@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import './style.css'
 import { EMOTIONS, EMOTION_ORDER, resolveEmotion } from './emotions.js'
+import { DragOrbitController } from './drag-controller.js'
 
 const app = document.querySelector('#app')
 
@@ -33,14 +34,14 @@ app.innerHTML = `
       </form>
     </section>
 
-    <div class="scene-wrap" id="scene-wrap" aria-label="Interactive three-dimensional emotional egg">
+    <div class="scene-wrap" id="scene-wrap" aria-label="Interactive three-dimensional emotional egg. Drag to rotate it, or press Enter to stir it.">
       <div class="scene" id="scene"></div>
       <div class="scene-caption" aria-hidden="true">
         <span id="emotion-number">04</span>
         <span class="caption-line"></span>
         <span id="emotion-name">Wonder</span>
       </div>
-      <div class="interaction-hint"><span>Click to stir the egg</span><i aria-hidden="true"></i></div>
+      <div class="interaction-hint"><span>Drag to rotate · Tap to stir</span><i aria-hidden="true"></i></div>
     </div>
 
     <nav class="emotion-nav" aria-label="Select an emotional state">
@@ -54,7 +55,7 @@ app.innerHTML = `
     </nav>
 
     <footer class="footer">
-      <p>Move to bend the field · Click to add energy</p>
+      <p>Drag to rotate · Tap to add energy</p>
       <div class="meter" aria-label="Animation performance"><span id="fps">60</span> FPS</div>
     </footer>
 
@@ -77,6 +78,10 @@ const moodForm = document.querySelector('#mood-form')
 const moodInput = document.querySelector('#mood-input')
 const fpsOutput = document.querySelector('#fps')
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const dragOrbit = new DragOrbitController({
+  sensitivity: reduceMotion ? 0.0035 : 0.006,
+  damping: reduceMotion ? 8 : 4.5,
+})
 
 let renderer
 try {
@@ -440,6 +445,7 @@ let pointerX = 0
 let pointerY = 0
 let targetPointerX = 0
 let targetPointerY = 0
+let autoRotationY = 0.22
 let lastTime = performance.now()
 let frameCount = 0
 let fpsStartedAt = lastTime
@@ -522,8 +528,10 @@ function animate(now) {
 
   pointerX = THREE.MathUtils.damp(pointerX, targetPointerX, 3.4, delta)
   pointerY = THREE.MathUtils.damp(pointerY, targetPointerY, 3.4, delta)
-  field.rotation.y += delta * orbitSpeed * motionScale
-  field.rotation.x = -0.08 + pointerY * 0.18
+  dragOrbit.tick(delta)
+  autoRotationY += delta * orbitSpeed * motionScale
+  field.rotation.y = autoRotationY + dragOrbit.rotation.yaw
+  field.rotation.x = -0.08 + pointerY * 0.18 + dragOrbit.rotation.pitch
   camera.position.x = pointerX * 0.35
   camera.position.y = -pointerY * 0.28
   camera.lookAt(0, 0, 0)
@@ -553,16 +561,43 @@ function animate(now) {
 }
 
 sceneWrap.addEventListener('pointermove', (event) => {
+  if (event.pointerId === dragOrbit.activePointerId) {
+    event.preventDefault()
+    const result = dragOrbit.move(event.pointerId, event.clientX, event.clientY)
+    if (result.dragging) sceneWrap.classList.add('is-dragging')
+    targetPointerX = 0
+    targetPointerY = 0
+    return
+  }
   if (reduceMotion) return
   const bounds = sceneWrap.getBoundingClientRect()
   targetPointerX = ((event.clientX - bounds.left) / bounds.width - 0.5) * 2
   targetPointerY = ((event.clientY - bounds.top) / bounds.height - 0.5) * 2
 })
 sceneWrap.addEventListener('pointerleave', () => {
+  if (dragOrbit.activePointerId !== null) return
   targetPointerX = 0
   targetPointerY = 0
 })
-sceneWrap.addEventListener('pointerdown', stirField)
+sceneWrap.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  if (!dragOrbit.start(event.pointerId, event.clientX, event.clientY)) return
+  sceneWrap.setPointerCapture(event.pointerId)
+  sceneWrap.classList.add('is-pressed')
+  targetPointerX = 0
+  targetPointerY = 0
+})
+
+function finishPointer(event, cancelled = false) {
+  const result = dragOrbit.end(event.pointerId)
+  if (!result.handled) return
+  if (sceneWrap.hasPointerCapture(event.pointerId)) sceneWrap.releasePointerCapture(event.pointerId)
+  sceneWrap.classList.remove('is-pressed', 'is-dragging')
+  if (!cancelled && !result.dragged) stirField()
+}
+
+sceneWrap.addEventListener('pointerup', (event) => finishPointer(event))
+sceneWrap.addEventListener('pointercancel', (event) => finishPointer(event, true))
 sceneWrap.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault()

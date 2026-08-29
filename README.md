@@ -24,7 +24,7 @@ npm run build
 
 - Choose Joy, Calm, Love, Wonder, Anger, or Melancholy.
 - Enter a related mood in the text field to map it to a visual state.
-- Move the pointer over the field to shift perspective.
-- Click the field, or focus it and press Enter/Space, to add a short energy burst.
+- Drag the egg with a mouse, pen, or touch gesture to rotate it; release to keep a short inertial spin.
+- Tap/click without dragging, or focus the field and press Enter/Space, to add a short energy burst.
 
 The scene respects `prefers-reduced-motion` and all controls are keyboard accessible.

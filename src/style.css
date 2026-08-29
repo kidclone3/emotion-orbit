@@ -265,7 +265,14 @@ h1 em {
   position: relative;
   z-index: 1;
   min-height: 35rem;
-  cursor: crosshair;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.scene-wrap.is-pressed,
+.scene-wrap.is-dragging {
+  cursor: grabbing;
 }
 
 .scene {
