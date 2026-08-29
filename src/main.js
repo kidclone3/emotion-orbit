@@ -114,24 +114,6 @@ const uniforms = {
   uBurst: { value: 0 },
 }
 
-const eggProfileShader = `
-  vec3 eggProfile(vec3 p) {
-    float vertical = clamp(p.y / 1.38, -1.0, 1.0);
-    float upper = smoothstep(0.02, 0.92, vertical);
-    float lowerBody = exp(-pow((vertical + 0.34) * 2.25, 2.0));
-    float radialScale = 1.02 + lowerBody * 0.105 - upper * 0.31;
-    p.xz *= radialScale;
-    p.y = p.y * 1.24 - 0.08;
-    return p;
-  }
-
-  vec3 eggNormal(vec3 objectNormal, float vertical) {
-    float upper = smoothstep(0.02, 0.92, vertical);
-    float lowerBody = exp(-pow((vertical + 0.34) * 2.25, 2.0));
-    float radialScale = 1.02 + lowerBody * 0.105 - upper * 0.31;
-    return normalize(vec3(objectNormal.x / radialScale, objectNormal.y / 1.24, objectNormal.z / radialScale));
-  }
-`
 
 const coreGeometry = new THREE.IcosahedronGeometry(1.38, 5)
 const coreMaterial = new THREE.ShaderMaterial({
@@ -146,12 +128,11 @@ const coreMaterial = new THREE.ShaderMaterial({
     varying float vDisplacement;
     varying float vVertical;
 
-    ${eggProfileShader}
 
     void main() {
       float vertical = clamp(position.y / 1.38, -1.0, 1.0);
-      vec3 p = eggProfile(position);
-      vec3 shapedNormal = eggNormal(normal, vertical);
+      vec3 p = position;
+      vec3 shapedNormal = normal;
       float speed = 0.35 + uEnergy * 0.42;
       float waveA = sin(p.x * 3.1 + uTime * speed) * cos(p.y * 2.7 - uTime * speed * 0.7);
       float waveB = sin((p.y + p.z) * 4.6 - uTime * speed * 1.35);
@@ -217,11 +198,10 @@ const yolkMaterial = new THREE.ShaderMaterial({
     varying vec3 vNormal;
     varying vec3 vViewPosition;
     varying float vVertical;
-    ${eggProfileShader}
     void main() {
       float vertical = clamp(position.y / 1.38, -1.0, 1.0);
-      vec3 p = eggProfile(position);
-      vec3 shapedNormal = eggNormal(normal, vertical);
+      vec3 p = position;
+      vec3 shapedNormal = normal;
       float pulse = sin(uTime * (0.9 + uEnergy * 0.35)) * 0.018 + uBurst * 0.035;
       p += shapedNormal * pulse;
       vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
@@ -267,11 +247,9 @@ const shellMaterial = new THREE.ShaderMaterial({
   vertexShader: `
     varying vec3 vNormal;
     varying vec3 vViewPosition;
-    ${eggProfileShader}
     void main() {
-      float vertical = clamp(position.y / 1.38, -1.0, 1.0);
-      vec3 p = eggProfile(position);
-      vec3 shapedNormal = eggNormal(normal, vertical);
+      vec3 p = position;
+      vec3 shapedNormal = normal;
       vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
       vNormal = normalize(normalMatrix * shapedNormal);
       vViewPosition = -mvPosition.xyz;
