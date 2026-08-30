@@ -1,0 +1,273 @@
+{
+  "spike": "001-liquid-emotion-orbit",
+  "revision": "folded-liquid-glass-temporal-boundary-resize-and-specular-stability",
+  "target": {
+    "three": "0.185.1",
+    "browser": "headless Chromium with software WebGL fallback",
+    "defaultSeed": 7,
+    "defaultStartTime": 2.75
+  },
+  "fieldContract": [
+    "stable screen coordinates and deterministic seed",
+    "shared advected domain warp",
+    "broad fold, cross-fold, and ribbon height with explicit smooth phases",
+    "derivative normal, valley, specular, and Fresnel causes",
+    "green and amber surface identity",
+    "refracted-coordinate bulge with thickness absorption and rim response"
+  ],
+  "temporalContract": {
+    "grainMode": "static-spatial",
+    "simulationStepCapMs": 33.333,
+    "timeSource": "integrated clamped requestAnimationFrame delta",
+    "reducedMotionScale": 0.08,
+    "rootCauseRemoved": "full-frame grain reseeding from floor(time * 11.0)"
+  },
+  "resizeContract": {
+    "eventCoalescing": "requestAnimationFrame",
+    "activeResizePixelRatio": "stable",
+    "settledQualityDelayMs": 150,
+    "balancedDprCapRange": [1.25, 1.6],
+    "compositionDriver": "continuous viewport aspect",
+    "renderAfterBufferChange": true,
+    "diagnostics": "window.__spike.getResizeState()"
+  },
+  "views": [
+    {
+      "file": "desktop-final.png",
+      "viewport": [1440, 1024],
+      "query": "freeze=1&time=2.75&seed=7",
+      "purpose": "authored stabilized folded-liquid frame"
+    },
+    {
+      "file": "ultrawide-final.png",
+      "viewport": [2560, 1080],
+      "query": "freeze=1&time=7.5&seed=41",
+      "purpose": "band-limited ultrawide final material"
+    },
+    {
+      "file": "ultrawide-normals.png",
+      "viewport": [2560, 1080],
+      "debug": "band-limited surface normals"
+    },
+    {
+      "file": "ultrawide-specular.png",
+      "viewport": [2560, 1080],
+      "debug": "footprint-filtered specular field"
+    },
+    {
+      "file": "boundary-crop.png",
+      "viewport": [1568, 200],
+      "sourceViewport": [1568, 900],
+      "purpose": "live lower-edge continuity after broad mask and Gaussian rim fix"
+    },
+    {
+      "file": "half-window.png",
+      "viewport": [784, 900],
+      "purpose": "settled half-window state after ten-step resize burst"
+    },
+    {
+      "file": "temporal-sequence.png",
+      "viewport": [960, 540],
+      "sourceViewport": [1440, 1024],
+      "samplesMs": [0, 300, 600, 900, 1200, 1500],
+      "purpose": "live temporal-continuity contact sheet"
+    },
+    {
+      "file": "reference-frame.png",
+      "viewport": [1059, 1121],
+      "query": "freeze=1&time=7.5&seed=41",
+      "purpose": "supplied-reference aspect and stress seed"
+    },
+    {
+      "file": "mobile-final.png",
+      "viewport": [390, 844],
+      "query": "freeze=1&time=2.75&seed=7",
+      "purpose": "responsive composition"
+    },
+    {
+      "file": "desktop-anger.png",
+      "viewport": [1440, 1024],
+      "input": "I am furious and frustrated",
+      "purpose": "freeform emotion transition after temporal fix"
+    },
+    {
+      "file": "desktop-baseline.png",
+      "viewport": [1440, 1024],
+      "query": "freeze=1&time=2.75&seed=7&baseline=1",
+      "purpose": "no-grain, no-vignette, no-CSS-overlay baseline"
+    },
+    {
+      "file": "desktop-height.png",
+      "viewport": [1440, 1024],
+      "debug": "fold height"
+    },
+    {
+      "file": "desktop-normals.png",
+      "viewport": [1440, 1024],
+      "debug": "surface normals"
+    },
+    {
+      "file": "desktop-specular.png",
+      "viewport": [1440, 1024],
+      "debug": "specular field"
+    },
+    {
+      "file": "tablet-stress-seed41.png",
+      "viewport": [1024, 768],
+      "query": "freeze=1&time=7.5&seed=41",
+      "purpose": "stress seed and intermediate viewport"
+    }
+  ],
+  "observations": {
+    "temporalProbe": {
+      "samples": 12,
+      "points": 9,
+      "framesBetween": 1,
+      "shaderTimeStart": 3.0061,
+      "shaderTimeEnd": 3.3583,
+      "shaderTimeMonotonic": true,
+      "meanColorStep": 0.000119,
+      "peakColorStep": 0.00029,
+      "meanColorAcceleration": 0.000261,
+      "grainMode": "static-spatial",
+      "simulationStepCapMs": 33.333
+    },
+    "ultrawideMaterialFiltering": {
+      "viewport": [2560, 1080],
+      "normalStrength": 0.2,
+      "surfaceSpecularExponentRange": [4, 24],
+      "glassSpecularExponentRange": [8, 22],
+      "footprintFiltered": true,
+      "gradientProbeSamples": 305868,
+      "maxNeighborLumaDelta": 0.030256,
+      "ratioOver0.08": 0,
+      "ratioOver0.12": 0,
+      "horizontalOverflowPx": 0,
+      "pageErrors": 0
+    },
+    "ultrawideDynamicResize": {
+      "initialViewport": [2560, 1080],
+      "halfViewport": [1280, 1080],
+      "restoredViewport": [2560, 1080],
+      "halfDrawingBuffer": [1280, 1080],
+      "halfCenterPixelRgba": [61, 54, 12, 255],
+      "restoredDrawingBuffer": [2560, 1080],
+      "restoredSettled": true,
+      "horizontalOverflowPx": 0,
+      "pageErrors": 0
+    },
+    "boundaryContinuity": {
+      "sourceViewport": [1568, 900],
+      "region": "visual lower 33%",
+      "rowStridePx": 2,
+      "columnStridePx": 4,
+      "maxAdjacentSampledRowLumaStep": 0.001601,
+      "medianAdjacentSampledRowLumaStep": 0.000463,
+      "maxToMedianRatio": 3.46,
+      "maskTransitionWidthNormalized": 0.18,
+      "rimModel": "Gaussian width 0.07",
+      "branchExitRadial": 1.16
+    },
+    "dynamicResize": {
+      "initialViewport": [1568, 900],
+      "halfViewport": [784, 900],
+      "restoredViewport": [1568, 900],
+      "burstNotifications": 20,
+      "burstChangedBufferCommitsAfterInitialization": 10,
+      "halfSettled": true,
+      "halfDrawingBuffer": [784, 900],
+      "halfCssCanvasBounds": [784, 900],
+      "restoredNotifications": 40,
+      "restoredChangedBufferCommits": 21,
+      "restoredSettled": true,
+      "restoredDrawingBuffer": [1568, 900],
+      "sampledIntermediateWidths": [860, 940, 1020, 1100, 1180, 1260, 1340, 1420, 1500, 1568],
+      "sampledCenterPixelMinimumAlpha": 255,
+      "horizontalOverflowPx": 0,
+      "pageErrors": 0
+    },
+    "retinaDynamicResize": {
+      "devicePixelRatio": 2,
+      "halfViewport": [784, 900],
+      "settledPixelRatio": 1.403382536883066,
+      "settledDrawingBuffer": [1100, 1263],
+      "centerPixelRgba": [51, 47, 11, 255],
+      "horizontalOverflowPx": 0,
+      "restoredDevicePixelRatio": 1,
+      "restoredViewport": [1568, 900],
+      "restoredDrawingBuffer": [1568, 900],
+      "restoredSettled": true
+    },
+    "ultrawideHalfWindowTemporalProbe": {
+      "samples": 8,
+      "points": 9,
+      "shaderTimeStart": 3.4863,
+      "shaderTimeEnd": 3.7104,
+      "shaderTimeMonotonic": true,
+      "meanColorStep": 0.000104,
+      "peakColorStep": 0.00029,
+      "grainMode": "static-spatial",
+      "simulationStepCapMs": 33.333
+    },
+    "desktop": {
+      "horizontalOverflowPx": 0,
+      "pageErrors": 0,
+      "renderCalls": 1,
+      "triangles": 2,
+      "renderTargets": 0
+    },
+    "referenceAspect": {
+      "horizontalOverflowPx": 0,
+      "pageErrors": 0,
+      "viewport": [1059, 1121]
+    },
+    "tablet": {
+      "horizontalOverflowPx": 0,
+      "pageErrors": 0,
+      "viewport": [1024, 768]
+    },
+    "mobile": {
+      "horizontalOverflowPx": 0,
+      "pageErrors": 0,
+      "sendTargetPx": [88, 44],
+      "viewport": [390, 844]
+    },
+    "interaction": {
+      "submittedEmotion": "anger",
+      "inputCleared": true,
+      "currentStateUpdated": true,
+      "statusUpdated": true
+    },
+    "reducedMotion": {
+      "mediaQueryMatched": true,
+      "transitionDurationSeconds": 0.00001,
+      "horizontalOverflowPx": 0,
+      "probeSamples": 6,
+      "shaderTimeStart": 2.7551,
+      "shaderTimeEnd": 2.7679,
+      "peakColorStep": 0
+    },
+    "softwareWebglPerformance": {
+      "met60Fps": false,
+      "note": "Headless software-renderer CPU timing is not a GPU-performance claim; capped simulation time prevents dropped frames from becoming visual jumps."
+    }
+  },
+  "opticalBoundary": {
+    "model": "single-pass stylized opaque liquid glass",
+    "mechanisms": [
+      "sphere-derived normal",
+      "refracted field coordinate",
+      "thickness-dependent exponential absorption",
+      "Fresnel response",
+      "broad 0.18-unit mask transition",
+      "Gaussian rim fully decayed before branch exit"
+    ],
+    "notClaimed": "closed-volume or two-pass physically exact glass transmission"
+  },
+  "browserConsole": {
+    "pageErrors": [],
+    "warnings": [
+      "Chromium reported that automatic software WebGL fallback is deprecated."
+    ]
+  }
+}
