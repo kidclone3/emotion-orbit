@@ -7,10 +7,10 @@ export const EMOTIONS = {
     background: '#170b26',
     glow: '#ff9f43',
     energy: 1.18,
-    turbulence: 1.15,
-    orbitSpeed: 0.42,
-    particleSize: 3.4,
-    shape: -0.08,
+    foldDepth: 1.15,
+    flowSpeed: 0.42,
+    lensStrength: 1.12,
+    lensShape: -0.08,
     copy: 'Bright, buoyant, and impossible to hold still.',
   },
   calm: {
@@ -21,10 +21,10 @@ export const EMOTIONS = {
     background: '#041820',
     glow: '#41d6c3',
     energy: 0.42,
-    turbulence: 0.28,
-    orbitSpeed: 0.12,
-    particleSize: 2.2,
-    shape: 0.02,
+    foldDepth: 0.28,
+    flowSpeed: 0.12,
+    lensStrength: 0.82,
+    lensShape: 0.02,
     copy: 'A slow tide with room between every thought.',
   },
   love: {
@@ -35,10 +35,10 @@ export const EMOTIONS = {
     background: '#220918',
     glow: '#ff4f87',
     energy: 0.82,
-    turbulence: 0.55,
-    orbitSpeed: 0.24,
-    particleSize: 3,
-    shape: -0.04,
+    foldDepth: 0.55,
+    flowSpeed: 0.24,
+    lensStrength: 1,
+    lensShape: -0.04,
     copy: 'Warm gravity drawing everything a little closer.',
   },
   wonder: {
@@ -49,10 +49,10 @@ export const EMOTIONS = {
     background: '#0b0a25',
     glow: '#7367ff',
     energy: 0.72,
-    turbulence: 0.88,
-    orbitSpeed: 0.3,
-    particleSize: 2.7,
-    shape: 0.18,
+    foldDepth: 0.88,
+    flowSpeed: 0.3,
+    lensStrength: 0.94,
+    lensShape: 0.18,
     copy: 'The electric pause before the unknown opens.',
   },
   anger: {
@@ -63,10 +63,10 @@ export const EMOTIONS = {
     background: '#230706',
     glow: '#ff2a1a',
     energy: 1.45,
-    turbulence: 1.72,
-    orbitSpeed: 0.64,
-    particleSize: 3.8,
-    shape: -0.22,
+    foldDepth: 1.72,
+    flowSpeed: 0.64,
+    lensStrength: 1.24,
+    lensShape: -0.22,
     copy: 'Heat, velocity, and a boundary asking to be heard.',
   },
   melancholy: {
@@ -77,10 +77,10 @@ export const EMOTIONS = {
     background: '#080f20',
     glow: '#526fa8',
     energy: 0.3,
-    turbulence: 0.42,
-    orbitSpeed: 0.08,
-    particleSize: 1.9,
-    shape: 0.1,
+    foldDepth: 0.42,
+    flowSpeed: 0.08,
+    lensStrength: 0.74,
+    lensShape: 0.1,
     copy: 'Blue weight drifting softly through remembered light.',
   },
 }
@@ -156,6 +156,7 @@ const FEELING_WEIGHTS = {
   grief: { melancholy: 1 },
   grieving: { melancholy: 1 },
   depressed: { melancholy: 1 },
+  useless: { melancholy: 1 },
   resentful: { anger: 0.8, melancholy: 0.2 },
   annoyed: { anger: 1 },
   mad: { anger: 1 },
@@ -190,7 +191,52 @@ function blendNumber(scores, total, property) {
   ) / total
 }
 
-export function analyzeEmotionMessage(input) {
+function hashMessage(input) {
+  let hash = 2166136261
+  for (const character of input.trim().toLowerCase()) {
+    hash ^= character.codePointAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function addFallbackWeights(scores, input) {
+  const hash = hashMessage(input)
+  const primaryIndex = hash % EMOTION_ORDER.length
+  const secondaryIndex =
+    (primaryIndex + 1 + ((hash >>> 8) % (EMOTION_ORDER.length - 1))) % EMOTION_ORDER.length
+  scores[EMOTION_ORDER[primaryIndex]] = 0.72
+  scores[EMOTION_ORDER[secondaryIndex]] = 0.28
+}
+
+function shiftHex(hex, seed) {
+  const value = Number.parseInt(hex.slice(1), 16)
+  const channels = [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+  const channel = seed % channels.length
+  const delta = 24 + ((seed >>> 8) % 40)
+  channels[channel] += channels[channel] <= 255 - delta ? delta : -delta
+  return `#${channels.map((value) => value.toString(16).padStart(2, '0')).join('')}`
+}
+
+function ensurePaletteChanges(visual, currentVisual, input) {
+  if (
+    !currentVisual ||
+    visual.primary.toLowerCase() !== currentVisual.primary?.toLowerCase() ||
+    visual.accent.toLowerCase() !== currentVisual.accent?.toLowerCase()
+  ) {
+    return visual
+  }
+
+  const hash = hashMessage(input)
+  return {
+    ...visual,
+    primary: shiftHex(visual.primary, hash),
+    accent: shiftHex(visual.accent, hash >>> 5),
+  }
+}
+
+
+export function analyzeEmotionMessage(input, currentVisual = null) {
   const words = input.toLowerCase().match(/[a-z]+/g) ?? []
   const scores = Object.fromEntries(EMOTION_ORDER.map((emotion) => [emotion, 0]))
 
@@ -204,28 +250,32 @@ export function analyzeEmotionMessage(input) {
     }
   }
 
-  const total = Object.values(scores).reduce((sum, score) => sum + score, 0)
-  if (total === 0) {
-    return { matched: false, dominant: null, visual: null }
+  let total = Object.values(scores).reduce((sum, score) => sum + score, 0)
+  const matched = total > 0
+  if (!matched) {
+    if (!input.trim()) return { matched: false, dominant: null, visual: null }
+    addFallbackWeights(scores, input)
+    total = 1
   }
 
   const dominant = EMOTION_ORDER.reduce((strongest, emotion) =>
     scores[emotion] > scores[strongest] ? emotion : strongest,
   )
+  const visual = {
+    primary: blendHex(scores, total, 'primary'),
+    accent: blendHex(scores, total, 'accent'),
+    background: blendHex(scores, total, 'background'),
+    glow: blendHex(scores, total, 'glow'),
+    energy: blendNumber(scores, total, 'energy'),
+    foldDepth: blendNumber(scores, total, 'foldDepth'),
+    flowSpeed: blendNumber(scores, total, 'flowSpeed'),
+    lensStrength: blendNumber(scores, total, 'lensStrength'),
+    lensShape: blendNumber(scores, total, 'lensShape'),
+  }
 
   return {
-    matched: true,
+    matched,
     dominant,
-    visual: {
-      primary: blendHex(scores, total, 'primary'),
-      accent: blendHex(scores, total, 'accent'),
-      background: blendHex(scores, total, 'background'),
-      glow: blendHex(scores, total, 'glow'),
-      energy: blendNumber(scores, total, 'energy'),
-      turbulence: blendNumber(scores, total, 'turbulence'),
-      orbitSpeed: blendNumber(scores, total, 'orbitSpeed'),
-      particleSize: blendNumber(scores, total, 'particleSize'),
-      shape: blendNumber(scores, total, 'shape'),
-    },
+    visual: ensurePaletteChanges(visual, currentVisual, input),
   }
 }

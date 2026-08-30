@@ -1,3 +1,4 @@
+import { isIP } from 'node:net'
 import { WebSocket, WebSocketServer } from 'ws'
 import { createPiRpcSession } from './pi-rpc.js'
 
@@ -73,13 +74,80 @@ export function isAllowedOrigin(origin, host) {
   }
 }
 
+const LIVE_CHAT_LIMIT = 5
+const LIVE_CHAT_WINDOW_MS = 60_000
+
+function isLocalRequestHost(host) {
+  if (!host) return false
+  try {
+    const hostname = new URL(`http://${host}`).hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '::1') {
+      return true
+    }
+    return isIP(hostname) === 4 && hostname.startsWith('127.')
+  } catch {
+    return false
+  }
+}
+
+function clientAddress(request, trustProxy) {
+  const forwarded = request.headers['x-forwarded-for']
+  if (trustProxy && typeof forwarded === 'string') {
+    const address = forwarded.split(',', 1)[0].trim()
+    if (isIP(address)) return address
+  }
+  return request.socket.remoteAddress ?? 'unknown'
+}
+
+function isLoopbackAddress(address) {
+  const normalized = address.toLowerCase()
+  if (normalized === '::1' || normalized.startsWith('::ffff:127.')) return true
+  return isIP(normalized) === 4 && normalized.startsWith('127.')
+}
+
+function createPromptRateLimiter(now) {
+  const clients = new Map()
+  let checks = 0
+
+  return (key) => {
+    const timestamp = now()
+    const cutoff = timestamp - LIVE_CHAT_WINDOW_MS
+    if ((checks++ & 255) === 0) {
+      for (const [client, attempts] of clients) {
+        if (attempts.at(-1) <= cutoff) clients.delete(client)
+      }
+    }
+
+    const attempts = clients.get(key) ?? []
+    let expired = 0
+    while (expired < attempts.length && attempts[expired] <= cutoff) expired += 1
+    if (expired > 0) attempts.splice(0, expired)
+    if (attempts.length >= LIVE_CHAT_LIMIT) {
+      return { allowed: false, retryAfterMs: attempts[0] + LIVE_CHAT_WINDOW_MS - timestamp }
+    }
+
+    attempts.push(timestamp)
+    clients.set(key, attempts)
+    return { allowed: true, retryAfterMs: 0 }
+  }
+}
+
+
 function send(socket, message) {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(message))
   }
 }
 
-export function attachChatWebSocketServer(server, { createSession = createPiRpcSession } = {}) {
+export function attachChatWebSocketServer(
+  server,
+  {
+    createSession = createPiRpcSession,
+    trustProxy = false,
+    rateLimitNow = Date.now,
+  } = {},
+) {
+  const takePromptSlot = createPromptRateLimiter(rateLimitNow)
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 8192 })
 
   server.on('upgrade', (request, socket, head) => {
@@ -92,13 +160,16 @@ export function attachChatWebSocketServer(server, { createSession = createPiRpcS
     }
 
     sockets.handleUpgrade(request, socket, head, (websocket) => {
-      sockets.emit('connection', websocket)
+      sockets.emit('connection', websocket, request)
     })
   })
 
-  sockets.on('connection', (socket) => {
+  sockets.on('connection', (socket, request) => {
     let busy = false
     let closed = false
+    const address = clientAddress(request, trustProxy)
+    const rateLimitKey =
+      isLocalRequestHost(request.headers.host) && isLoopbackAddress(address) ? null : address
     const session = createSession({
       onEvent(event) {
         const message = eventToClientMessage(event)
@@ -146,6 +217,18 @@ export function attachChatWebSocketServer(server, { createSession = createPiRpcS
           message: 'Pi is still responding. Wait for the current response to finish.',
         })
         return
+      }
+
+      if (rateLimitKey) {
+        const rateLimit = takePromptSlot(rateLimitKey)
+        if (!rateLimit.allowed) {
+          const retryAfterSeconds = Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1000))
+          send(socket, {
+            type: 'assistant_error',
+            message: `Live chat is limited to 5 messages per minute. Try again in ${retryAfterSeconds} seconds.`,
+          })
+          return
+        }
       }
 
       try {

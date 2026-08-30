@@ -23,7 +23,10 @@ test('all emotion definitions expose complete visual parameters', () => {
     assert.match(emotion.primary, /^#[0-9a-f]{6}$/i, `${name} primary`)
     assert.match(emotion.accent, /^#[0-9a-f]{6}$/i, `${name} accent`)
     assert.ok(emotion.energy > 0, `${name} energy`)
-    assert.ok(emotion.turbulence >= 0, `${name} turbulence`)
+    assert.ok(emotion.foldDepth >= 0, `${name} fold depth`)
+    assert.ok(emotion.flowSpeed > 0, `${name} flow speed`)
+    assert.ok(emotion.lensStrength > 0, `${name} lens strength`)
+    assert.ok(emotion.lensShape >= -1 && emotion.lensShape <= 1, `${name} lens shape`)
     assert.ok(emotion.copy.length > 20, `${name} copy`)
   }
 })
@@ -34,8 +37,10 @@ test('blends multiple feelings into a bounded visual mutation', () => {
   assert.equal(result.matched, true)
   assert.equal(result.dominant, 'wonder')
   assert.ok(result.visual.energy >= 0.3 && result.visual.energy <= 1.45)
-  assert.ok(result.visual.turbulence >= 0.28 && result.visual.turbulence <= 1.72)
-  assert.ok(result.visual.shape >= -1 && result.visual.shape <= 1)
+  assert.ok(result.visual.foldDepth >= 0.28 && result.visual.foldDepth <= 1.72)
+  assert.ok(result.visual.flowSpeed >= 0.08 && result.visual.flowSpeed <= 0.64)
+  assert.ok(result.visual.lensStrength >= 0.74 && result.visual.lensStrength <= 1.24)
+  assert.ok(result.visual.lensShape >= -1 && result.visual.lensShape <= 1)
   assert.match(result.visual.primary, /^#[0-9a-f]{6}$/i)
   assert.match(result.visual.accent, /^#[0-9a-f]{6}$/i)
 })
@@ -50,10 +55,23 @@ test('lets mixed emotional language produce a distinct continuous state', () => 
   assert.ok(bittersweet.visual.energy < joyful.visual.energy)
 })
 
-test('keeps unsupported messages available for chat without inventing an emotion', () => {
-  const result = analyzeEmotionMessage('Can you ask me a question?')
+test('creates a deterministic color mutation for unsupported chat messages', () => {
+  const currentVisual = {
+    primary: EMOTIONS.wonder.primary,
+    accent: EMOTIONS.wonder.accent,
+  }
+  const first = analyzeEmotionMessage('Can you ask me a question?', currentVisual)
+  const second = analyzeEmotionMessage('Can you ask me a question?', currentVisual)
 
-  assert.deepEqual(result, { matched: false, dominant: null, visual: null })
+  assert.equal(first.matched, false)
+  assert.ok(first.dominant)
+  assert.match(first.visual.primary, /^#[0-9a-f]{6}$/i)
+  assert.match(first.visual.accent, /^#[0-9a-f]{6}$/i)
+  assert.notDeepEqual(
+    [first.visual.primary, first.visual.accent],
+    [currentVisual.primary, currentVisual.accent],
+  )
+  assert.deepEqual(first, second)
 })
 
 test('maps disappointment after a failed test to melancholy', () => {
@@ -62,4 +80,22 @@ test('maps disappointment after a failed test to melancholy', () => {
   assert.equal(result.matched, true)
   assert.equal(result.dominant, 'melancholy')
   assert.equal(result.visual.primary, EMOTIONS.melancholy.primary)
+})
+
+test('changes the palette for the reported uselessness message', () => {
+  const currentVisual = {
+    primary: EMOTIONS.melancholy.primary,
+    accent: EMOTIONS.melancholy.accent,
+  }
+  const result = analyzeEmotionMessage(
+    'i feel useless and want the others can sharing they need to me?',
+    currentVisual,
+  )
+
+  assert.equal(result.matched, true)
+  assert.equal(result.dominant, 'melancholy')
+  assert.notDeepEqual(
+    [result.visual.primary, result.visual.accent],
+    [currentVisual.primary, currentVisual.accent],
+  )
 })
