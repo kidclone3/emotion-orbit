@@ -7,10 +7,27 @@ export const EMOTIONS = {
     background: '#170b26',
     glow: '#ff9f43',
     energy: 1.18,
-    turbulence: 1.15,
-    orbitSpeed: 0.42,
-    particleSize: 3.4,
-    shape: -0.08,
+    foldDepth: 1.15,
+    flowSpeed: 0.42,
+    lensStrength: 1.12,
+    lensShape: -0.08,
+    buoyancy: 0.82,
+    expansion: 1.16,
+    pulseRate: 0.92,
+    smoothness: 0.48,
+    attraction: 0.16,
+    orbit: 0.28,
+    depth: 0.62,
+    pressure: 0.18,
+    sharpness: 0.34,
+    downwardDrift: 0.02,
+    trail: 0.22,
+    satellites: 0.96,
+    pairing: 0.12,
+    aperture: 0.18,
+    shear: 0.18,
+    weight: 0.04,
+    stability: 0.28,
     copy: 'Bright, buoyant, and impossible to hold still.',
   },
   calm: {
@@ -21,10 +38,27 @@ export const EMOTIONS = {
     background: '#041820',
     glow: '#41d6c3',
     energy: 0.42,
-    turbulence: 0.28,
-    orbitSpeed: 0.12,
-    particleSize: 2.2,
-    shape: 0.02,
+    foldDepth: 0.28,
+    flowSpeed: 0.12,
+    lensStrength: 0.82,
+    lensShape: 0.02,
+    buoyancy: 0.12,
+    expansion: 1.08,
+    pulseRate: 0.12,
+    smoothness: 0.96,
+    attraction: 0.18,
+    orbit: 0.12,
+    depth: 0.38,
+    pressure: 0.08,
+    sharpness: 0.08,
+    downwardDrift: 0.08,
+    trail: 0.58,
+    satellites: 0.04,
+    pairing: 0.1,
+    aperture: 0.08,
+    shear: 0.03,
+    weight: 0.12,
+    stability: 0.98,
     copy: 'A slow tide with room between every thought.',
   },
   love: {
@@ -35,10 +69,27 @@ export const EMOTIONS = {
     background: '#220918',
     glow: '#ff4f87',
     energy: 0.82,
-    turbulence: 0.55,
-    orbitSpeed: 0.24,
-    particleSize: 3,
-    shape: -0.04,
+    foldDepth: 0.55,
+    flowSpeed: 0.24,
+    lensStrength: 1,
+    lensShape: -0.04,
+    buoyancy: 0.24,
+    expansion: 1.04,
+    pulseRate: 0.48,
+    smoothness: 0.74,
+    attraction: 0.92,
+    orbit: 0.26,
+    depth: 0.68,
+    pressure: 0.22,
+    sharpness: 0.2,
+    downwardDrift: 0.04,
+    trail: 0.42,
+    satellites: 0.12,
+    pairing: 0.98,
+    aperture: 0.16,
+    shear: 0.08,
+    weight: 0.06,
+    stability: 0.64,
     copy: 'Warm gravity drawing everything a little closer.',
   },
   wonder: {
@@ -49,10 +100,27 @@ export const EMOTIONS = {
     background: '#0b0a25',
     glow: '#7367ff',
     energy: 0.72,
-    turbulence: 0.88,
-    orbitSpeed: 0.3,
-    particleSize: 2.7,
-    shape: 0.18,
+    foldDepth: 0.88,
+    flowSpeed: 0.3,
+    lensStrength: 0.94,
+    lensShape: 0.18,
+    buoyancy: 0.34,
+    expansion: 1.1,
+    pulseRate: 0.36,
+    smoothness: 0.56,
+    attraction: 0.22,
+    orbit: 0.94,
+    depth: 0.96,
+    pressure: 0.16,
+    sharpness: 0.3,
+    downwardDrift: 0.02,
+    trail: 0.52,
+    satellites: 0.2,
+    pairing: 0.14,
+    aperture: 0.98,
+    shear: 0.12,
+    weight: 0.04,
+    stability: 0.42,
     copy: 'The electric pause before the unknown opens.',
   },
   anger: {
@@ -63,10 +131,27 @@ export const EMOTIONS = {
     background: '#230706',
     glow: '#ff2a1a',
     energy: 1.45,
-    turbulence: 1.72,
-    orbitSpeed: 0.64,
-    particleSize: 3.8,
-    shape: -0.22,
+    foldDepth: 1.72,
+    flowSpeed: 0.64,
+    lensStrength: 1.24,
+    lensShape: -0.22,
+    buoyancy: -0.18,
+    expansion: 0.86,
+    pulseRate: 0.68,
+    smoothness: 0.14,
+    attraction: -0.28,
+    orbit: 0.16,
+    depth: 0.46,
+    pressure: 0.96,
+    sharpness: 0.92,
+    downwardDrift: 0.12,
+    trail: 0.18,
+    satellites: 0.08,
+    pairing: 0.02,
+    aperture: 0.06,
+    shear: 0.98,
+    weight: 0.18,
+    stability: 0.08,
     copy: 'Heat, velocity, and a boundary asking to be heard.',
   },
   melancholy: {
@@ -77,10 +162,27 @@ export const EMOTIONS = {
     background: '#080f20',
     glow: '#526fa8',
     energy: 0.3,
-    turbulence: 0.42,
-    orbitSpeed: 0.08,
-    particleSize: 1.9,
-    shape: 0.1,
+    foldDepth: 0.42,
+    flowSpeed: 0.08,
+    lensStrength: 0.74,
+    lensShape: 0.1,
+    buoyancy: -0.64,
+    expansion: 0.94,
+    pulseRate: 0.06,
+    smoothness: 0.82,
+    attraction: 0.04,
+    orbit: 0.08,
+    depth: 0.58,
+    pressure: 0.12,
+    sharpness: 0.1,
+    downwardDrift: 0.92,
+    trail: 0.96,
+    satellites: 0.02,
+    pairing: 0.08,
+    aperture: 0.12,
+    shear: 0.06,
+    weight: 0.98,
+    stability: 0.5,
     copy: 'Blue weight drifting softly through remembered light.',
   },
 }
@@ -156,6 +258,7 @@ const FEELING_WEIGHTS = {
   grief: { melancholy: 1 },
   grieving: { melancholy: 1 },
   depressed: { melancholy: 1 },
+  useless: { melancholy: 1 },
   resentful: { anger: 0.8, melancholy: 0.2 },
   annoyed: { anger: 1 },
   mad: { anger: 1 },
@@ -190,7 +293,52 @@ function blendNumber(scores, total, property) {
   ) / total
 }
 
-export function analyzeEmotionMessage(input) {
+function hashMessage(input) {
+  let hash = 2166136261
+  for (const character of input.trim().toLowerCase()) {
+    hash ^= character.codePointAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function addFallbackWeights(scores, input) {
+  const hash = hashMessage(input)
+  const primaryIndex = hash % EMOTION_ORDER.length
+  const secondaryIndex =
+    (primaryIndex + 1 + ((hash >>> 8) % (EMOTION_ORDER.length - 1))) % EMOTION_ORDER.length
+  scores[EMOTION_ORDER[primaryIndex]] = 0.72
+  scores[EMOTION_ORDER[secondaryIndex]] = 0.28
+}
+
+function shiftHex(hex, seed) {
+  const value = Number.parseInt(hex.slice(1), 16)
+  const channels = [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+  const channel = seed % channels.length
+  const delta = 24 + ((seed >>> 8) % 40)
+  channels[channel] += channels[channel] <= 255 - delta ? delta : -delta
+  return `#${channels.map((value) => value.toString(16).padStart(2, '0')).join('')}`
+}
+
+function ensurePaletteChanges(visual, currentVisual, input) {
+  if (
+    !currentVisual ||
+    visual.primary.toLowerCase() !== currentVisual.primary?.toLowerCase() ||
+    visual.accent.toLowerCase() !== currentVisual.accent?.toLowerCase()
+  ) {
+    return visual
+  }
+
+  const hash = hashMessage(input)
+  return {
+    ...visual,
+    primary: shiftHex(visual.primary, hash),
+    accent: shiftHex(visual.accent, hash >>> 5),
+  }
+}
+
+
+export function analyzeEmotionMessage(input, currentVisual = null) {
   const words = input.toLowerCase().match(/[a-z]+/g) ?? []
   const scores = Object.fromEntries(EMOTION_ORDER.map((emotion) => [emotion, 0]))
 
@@ -204,28 +352,49 @@ export function analyzeEmotionMessage(input) {
     }
   }
 
-  const total = Object.values(scores).reduce((sum, score) => sum + score, 0)
-  if (total === 0) {
-    return { matched: false, dominant: null, visual: null }
+  let total = Object.values(scores).reduce((sum, score) => sum + score, 0)
+  const matched = total > 0
+  if (!matched) {
+    if (!input.trim()) return { matched: false, dominant: null, visual: null }
+    addFallbackWeights(scores, input)
+    total = 1
   }
 
   const dominant = EMOTION_ORDER.reduce((strongest, emotion) =>
     scores[emotion] > scores[strongest] ? emotion : strongest,
   )
+  const visual = {
+    primary: blendHex(scores, total, 'primary'),
+    accent: blendHex(scores, total, 'accent'),
+    background: blendHex(scores, total, 'background'),
+    glow: blendHex(scores, total, 'glow'),
+    energy: blendNumber(scores, total, 'energy'),
+    foldDepth: blendNumber(scores, total, 'foldDepth'),
+    flowSpeed: blendNumber(scores, total, 'flowSpeed'),
+    lensStrength: blendNumber(scores, total, 'lensStrength'),
+    lensShape: blendNumber(scores, total, 'lensShape'),
+    buoyancy: blendNumber(scores, total, 'buoyancy'),
+    expansion: blendNumber(scores, total, 'expansion'),
+    pulseRate: blendNumber(scores, total, 'pulseRate'),
+    smoothness: blendNumber(scores, total, 'smoothness'),
+    attraction: blendNumber(scores, total, 'attraction'),
+    orbit: blendNumber(scores, total, 'orbit'),
+    depth: blendNumber(scores, total, 'depth'),
+    pressure: blendNumber(scores, total, 'pressure'),
+    sharpness: blendNumber(scores, total, 'sharpness'),
+    downwardDrift: blendNumber(scores, total, 'downwardDrift'),
+    trail: blendNumber(scores, total, 'trail'),
+    satellites: blendNumber(scores, total, 'satellites'),
+    pairing: blendNumber(scores, total, 'pairing'),
+    aperture: blendNumber(scores, total, 'aperture'),
+    shear: blendNumber(scores, total, 'shear'),
+    weight: blendNumber(scores, total, 'weight'),
+    stability: blendNumber(scores, total, 'stability'),
+  }
 
   return {
-    matched: true,
+    matched,
     dominant,
-    visual: {
-      primary: blendHex(scores, total, 'primary'),
-      accent: blendHex(scores, total, 'accent'),
-      background: blendHex(scores, total, 'background'),
-      glow: blendHex(scores, total, 'glow'),
-      energy: blendNumber(scores, total, 'energy'),
-      turbulence: blendNumber(scores, total, 'turbulence'),
-      orbitSpeed: blendNumber(scores, total, 'orbitSpeed'),
-      particleSize: blendNumber(scores, total, 'particleSize'),
-      shape: blendNumber(scores, total, 'shape'),
-    },
+    visual: ensurePaletteChanges(visual, currentVisual, input),
   }
 }

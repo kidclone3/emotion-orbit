@@ -8,6 +8,7 @@ import { attachChatWebSocketServer } from './server/chat-server.js'
 const isDevelopment = process.argv.includes('--dev')
 const host = process.env.HOST ?? '127.0.0.1'
 const port = Number.parseInt(process.env.PORT ?? '5173', 10)
+const trustProxy = process.env.TRUST_PROXY === '1'
 const httpServer = createServer()
 
 if (isDevelopment) {
@@ -72,7 +73,7 @@ if (isDevelopment) {
   })
 }
 
-const chatServer = attachChatWebSocketServer(httpServer)
+const chatServer = attachChatWebSocketServer(httpServer, { trustProxy })
 httpServer.listen(port, host, () => {
   console.log(`Emotion Orbit listening on http://${host}:${port}`)
 })

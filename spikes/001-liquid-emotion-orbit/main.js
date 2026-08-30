@@ -123,6 +123,10 @@ const material = new THREE.ShaderMaterial({
       return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
     }
 
+    float interleavedGradientNoise(vec2 pixel) {
+      return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+    }
+
     float valueNoise(vec2 p) {
       vec2 cell = floor(p);
       vec2 local = fract(p);
@@ -173,7 +177,7 @@ const material = new THREE.ShaderMaterial({
       out float heightValue,
       out vec3 normalValue,
       out float specularValue,
-      out float specularFootprint
+      out float roughnessValue
     ) {
       heightValue = foldHeight(p, time);
       normalValue = foldNormal(heightValue);
@@ -183,13 +187,10 @@ const material = new THREE.ShaderMaterial({
       vec3 halfDirection = normalize(lightDirection + viewDirection);
       float diffuse = smoothstep(-0.22, 0.52, dot(normalValue, lightDirection));
       float normalHalf = max(dot(normalValue, halfDirection), 0.0);
-      specularFootprint = clamp(
-        (length(dFdx(normalValue)) + length(dFdy(normalValue))) * 18.0,
-        0.0,
-        1.0
-      );
-      float broadSpecular = pow(normalHalf, mix(8.0, 4.0, specularFootprint));
-      float sharpSpecular = pow(normalHalf, mix(24.0, 8.0, specularFootprint));
+      float slope = clamp(length(normalValue.xy), 0.0, 1.0);
+      roughnessValue = smoothstep(0.18, 0.82, slope);
+      float broadSpecular = pow(normalHalf, mix(7.0, 4.0, roughnessValue));
+      float softSpecular = pow(normalHalf, mix(14.0, 7.0, roughnessValue));
       float facing = clamp(normalValue.z, 0.0, 1.0);
       float fresnel = pow(1.0 - facing, 4.0);
       float foldBand = smoothstep(-0.68, 0.72, heightValue + normalValue.x * 0.22);
@@ -202,8 +203,8 @@ const material = new THREE.ShaderMaterial({
 
       vec3 specularColor = mix(uPaletteA, uPaletteB, smoothstep(-0.2, 0.74, heightValue));
       specularValue =
-        (broadSpecular * 0.42 + sharpSpecular * 0.54) *
-        mix(1.0, 0.18, specularFootprint) +
+        (broadSpecular * 0.50 + softSpecular * 0.45) *
+        mix(0.88, 0.46, roughnessValue) +
         fresnel * 0.20;
       vec3 color = albedo * (0.24 + diffuse * 0.72);
       color += specularColor * specularValue;
@@ -220,14 +221,14 @@ const material = new THREE.ShaderMaterial({
       float heightValue;
       vec3 normalValue;
       float specularValue;
-      float specularFootprint;
+      float roughnessValue;
       vec3 color = shadeLiquid(
         screen * 1.08,
         time,
         heightValue,
         normalValue,
         specularValue,
-        specularFootprint
+        roughnessValue
       );
 
       vec2 blobCenter = uCenter + uPointer * vec2(0.035, 0.025);
@@ -256,8 +257,8 @@ const material = new THREE.ShaderMaterial({
         vec3 halfDirection = normalize(lightDirection + vec3(0.0, 0.0, 1.0));
         float glassHalf = max(dot(glassNormal, halfDirection), 0.0);
         float glassSpecular =
-          pow(glassHalf, mix(22.0, 8.0, specularFootprint)) *
-          mix(1.0, 0.24, specularFootprint);
+          pow(glassHalf, mix(14.0, 7.0, roughnessValue)) *
+          mix(0.86, 0.46, roughnessValue);
         float glassFresnel = pow(1.0 - clamp(glassNormal.z, 0.0, 1.0), 4.0);
         float thickness = sphereZ * 1.35;
         vec3 absorption = exp(-vec3(0.64, 0.25, 0.42) * thickness);
@@ -272,8 +273,8 @@ const material = new THREE.ShaderMaterial({
       if (uBaseline < 0.5) {
         float vignette = 1.0 - smoothstep(0.24, 1.12, length((vUv - 0.5) * vec2(0.84, 1.0)));
         color *= mix(0.58, 1.0, vignette);
-        float grain = (hash21(gl_FragCoord.xy + vec2(37.0, -19.0)) - 0.5) * 0.018;
-        color += grain;
+        float dither = (interleavedGradientNoise(gl_FragCoord.xy) - 0.5) / 255.0;
+        color += dither;
       }
 
       if (uDebug > 0.5 && uDebug < 1.5) {
@@ -587,7 +588,7 @@ async function sampleTemporalStability({ samples = 12, framesBetween = 1 } = {})
     peakColorStep: Number(Math.max(...steps, 0).toFixed(6)),
     meanColorAcceleration: Number(meanAcceleration.toFixed(6)),
     accelerationToStepRatio: Number((meanAcceleration / Math.max(meanStep, 1e-6)).toFixed(3)),
-    grainMode: 'static-spatial',
+    ditherMode: 'subpixel-static',
     simulationStepCapMs: Number((1000 / 30).toFixed(3)),
   }
 }
@@ -605,7 +606,7 @@ window.__spike = {
     baseline,
     quality,
     shaderTime: Number(uniforms.uTime.value.toFixed(4)),
-    grainMode: 'static-spatial',
+    ditherMode: 'subpixel-static',
   }),
   getMetrics: () => {
     const sorted = [...frameDurations].sort((a, b) => a - b)
@@ -624,7 +625,7 @@ window.__spike = {
       memory: { ...renderer.info.memory },
       renderTargets: 0,
       simulationStepCapMs: Number((1000 / 30).toFixed(3)),
-      grainMode: 'static-spatial',
+      ditherMode: 'subpixel-static',
       gpuTiming: 'not instrumented in this disposable WebGL spike',
     }
   },

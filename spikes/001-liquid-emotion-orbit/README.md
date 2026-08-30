@@ -37,12 +37,12 @@ Height, normals, valleys, specular response, palette identity, distortion, and m
 - Subject: broad folded liquid media beneath one immense absorbed glass-like body, cropped beyond the top and right frame.
 - Interface: white/gray editorial chrome only; color is confined to canvas media.
 - Camera: fixed orthographic full-screen plane; no perspective dependency.
-- Motion: patient advected folds with explicit smooth phases; simulation steps clamp to 33.333ms after dropped frames, while film grain remains spatially fixed instead of reseeding over time.
+- Motion: patient advected folds with explicit smooth phases; simulation steps clamp to 33.333ms after dropped frames, and only a static subpixel dither remains in the presentation path.
 - Reproducibility: default seed `7`; `?freeze=1&time=2.75` freezes the authored frame.
 - Quality tiers: `?quality=low`, default balanced, and `?quality=high`; balanced DPR uses a continuous aspect-derived cap from `1.25–1.6`, remains fixed during active resizing, and recomputes once 150ms after the window settles.
 - Dynamic resize: native and `visualViewport` events coalesce to one drawing-buffer commit per animation frame; every changed buffer is rendered immediately, and the orb center interpolates by aspect instead of jumping at a width breakpoint.
 - Diagnostics: `?debug=height`, `?debug=normals`, and `?debug=specular`, or press `D` to cycle.
-- Baseline: `?baseline=1` removes the shader grain and vignette; no post-processing or render targets are used.
+- Baseline: `?baseline=1` removes the vignette and CSS presentation overlay; no post-processing or render targets are used.
 
 ## How to Run
 
@@ -82,10 +82,10 @@ Captured browser evidence and the observation manifest live under `evidence/`. `
 - `reference-frame.png`: 1059×1121 frame matching the supplied reference's aspect, using stress seed `41` at fixed time `7.5`.
 - `mobile-final.png`: 390×844 responsive frame; zero horizontal overflow, fully contained form, and an 88×44px send target.
 - `desktop-anger.png`: the submitted phrase “I am furious and frustrated” selected anger, changed the moving field target, updated live status and selected-state semantics, and cleared the input.
-- `desktop-baseline.png`: the folded surface and editorial composition remain legible with CSS grain, overlay treatment, shader grain, and vignette disabled.
+- `desktop-baseline.png`: the historical capture shows the folded surface and editorial composition with the then-present CSS and shader grain, overlay treatment, and vignette disabled.
 - `desktop-height.png`, `desktop-normals.png`, and `desktop-specular.png`: clean diagnostic views of the height, derivative-normal, and lighting causes.
 - `tablet-stress-seed41.png`: seed 41 at 1024×768 preserves the composition and produces no horizontal overflow.
-- `temporal-sequence.png`: six live canvas samples from `0–1500ms` show continuous fold displacement without full-frame grain changes.
+- `temporal-sequence.png`: six live canvas samples from `0–1500ms` show continuous fold displacement.
 - A 12-frame live probe after specular filtering sampled nine fixed canvas points: shader time was monotonic from `3.0061` to `3.3583`, mean RGB step was `0.000119`, and peak RGB step was `0.000290`.
 - A full→half burst emitted 20 resize notifications but only 10 changed-buffer commits after initialization; its settled state was `pending: false`. Restoring through ten widths kept every sampled center pixel populated with alpha `255`.
 - During the ultrawide 2560×1080→1280×1080→2560×1080 regression, the half-width eight-frame probe recorded monotonic shader time, mean RGB step `0.000104`, and peak RGB step `0.000290`.
@@ -98,13 +98,13 @@ The headless Chromium run used software WebGL and missed a 60fps frame budget. S
 
 - The first implementation uses a shader-owned screen field rather than adapting production orbit geometry. This keeps the experiment disposable and tests the reference's actual mechanism: a singular fluid media field under silent editorial UI.
 - The canvas is full-screen and the interface is semantic DOM. This separates visual feasibility from chat transport and keeps input, keyboard, and responsive behavior directly inspectable.
-- The first diagnostic capture exposed that the editorial CSS overlay contaminated field inspection. Debug and baseline modes now disable both that overlay and media grain, so their captures show the underlying shader causes.
+- The first diagnostic capture exposed that the editorial CSS overlay contaminated field inspection. Debug and baseline modes disable that overlay so their captures show the underlying shader causes.
 - The liquid-glass revision replaced the original soft color orb with a shared advected height field, derivative normals, coupled lighting, and a thickness-absorbed bulge. It deliberately models the reference's opaque oil/silk character rather than claiming physically complete transparent glass.
-- The reported flicker traced to a temporal grain hash keyed by `floor(time * 11.0)`: the entire grain field changed about eleven times per second while the folds moved too slowly to dominate perception. Grain is now spatially stable, fold phases advance explicitly, and simulation time integrates a capped frame delta instead of absolute wall-clock time.
+- The first reported flicker traced to a temporal grain hash keyed by `floor(time * 11.0)`. A later hardware report exposed a second interference source: the static `0.018` shader grain and a separate CSS `feTurbulence` layer were both pixel-scale signals, so DPR scaling and soft-light compositing could turn them into visible digital traces. The CSS layer is removed and the shader now uses only a static `1/255` interleaved dither; fold phases still advance through the capped simulation clock.
 - The initial “two screenshots differ” check proved activity but not stability. The spike now records fixed-point color steps and a six-frame temporal contact sheet.
 - The sharp horizontal contour was the oversized bulge's lower edge. The old mask ended over `0.033` normalized units, its rim used an exponential width of `74`, and the conditional branch stopped while the rim still contributed. The mask now blends over `0.18`, the rim uses a Gaussian width of `0.07`, and the branch exits only at radial distance `1.16`, after both contributions are negligible.
 - Half-window cracking traced to synchronous `setPixelRatio` and `setSize` calls on every resize notification, plus a DPR cap and orb center that jumped at `700px`. Resizing now coalesces through `requestAnimationFrame`, keeps DPR stable during the drag, renders immediately after a buffer change, settles quality after 150ms, and derives composition continuously from aspect.
-- Widescreen scratches traced to a resolution-amplified procedural normal feeding narrow `pow(46)` surface and `pow(34)` glass highlights without specular antialiasing. Normal strength is now `0.20`; diffuse lighting uses a broad terminator; surface and glass highlight exponents widen with measured normal footprint; unresolved highlights attenuate toward `18–24%`.
+- Widescreen scratches first traced to resolution-amplified normals and narrow highlights. The attempted footprint filter then introduced `dFdx`/`dFdy` calls over a normal already derived with `dFdx`/`dFdy`; those higher-order screen derivatives are undefined across fragment implementations and explain the backend-specific broken segments and flicker that the recorded captures missed. The current shader derives perceptual roughness from the first-order normal slope and uses broader surface and glass lobes without nested derivatives.
 
 ### What worked
 
@@ -112,14 +112,14 @@ The headless Chromium run used software WebGL and missed a 60fps frame budget. S
 - The final surface retained the reference's singular chromatic media gesture while every control remained monochrome.
 - Height, normal, and specular diagnostics expose the mechanism behind the folds, and the baseline reads without post treatment.
 - Deterministic seed, time, emotional palette, baseline, and diagnostic controls produced reproducible evidence.
-- The live temporal probe measured monotonic shader time, sub-`0.0006` peak RGB steps at nine fixed points, static spatial grain, and a 33.333ms simulation-step cap.
+- The live temporal probe measured monotonic shader time, sub-`0.0006` peak RGB steps at nine fixed points, static subpixel dither, and a 33.333ms simulation-step cap.
 - A live 1568×900 canvas-row probe over the lower 33% measured a maximum adjacent sampled-row luminance step of `0.001601`; `boundary-crop.png` shows no isolated horizontal contour.
 - At 2560×1080, the final, normal, and specular captures remain continuous; a 305,868-point gradient probe found no neighboring luminance deltas above `0.08`.
 - The full→half→full run ended with exact drawing-buffer/viewport agreement, zero overflow, no page errors, fewer commits than resize notifications, and nonzero alpha at every sampled intermediate width.
 
 ### What did not
 
-- Headless Chromium still did not establish production GPU performance or two-pass physically exact glass transmission. Earlier validation missed four perceptual defects because it did not initially test continuous time, isolate the lower optical edge, exercise active resizing, or inspect screen-space material response at ultrawide resolution.
+- The earlier validation did not establish cross-GPU portability: it missed undefined higher-order derivatives that could remain smooth on the capture backend while breaking into unstable quad-sized segments elsewhere. The current browser confirmation is clean, but the originally affected physical GPU remains the final portability check.
 
 ### Constraints and surprises
 
@@ -131,6 +131,6 @@ The headless Chromium run used software WebGL and missed a 60fps frame budget. S
 
 Keep the full-screen shader media layer and semantic chat chrome split. If this direction moves to production, profile GPU time on representative hardware first; only adopt a two-pass transmission path if later art direction requires visibly transparent glass rather than the current opaque liquid-silk response.
 
-## Verdict: VALIDATED
+## Verdict: READY FOR HARDWARE RECHECK
 
-For Three.js 0.185.1 in the recorded headless Chromium conditions, one procedural shader plus semantic DOM reproduces the revised reference mechanism without temporal grain flicker, the sharp lower bulge contour, resize-time buffer cracking, or ultrawide lighting scratches. At 2560×1080, band-limited normals and footprint-filtered highlights produced no sampled neighboring luminance deltas above `0.08`; final, normal, and specular captures remain continuous. A live 2560×1080→1280×1080→2560×1080 sequence kept buffers populated and maintained monotonic animation with peak fixed-point RGB steps of `0.000436` wide and `0.000290` half-width. Static views also held at 1440×1024, 1059×1121, 1024×768, 784×900, and 390×844. The software-WebGL run proves visual, resize, temporal, and interaction behavior—not production GPU frame rate.
+The earlier `VALIDATED` verdict was too broad. The shader contained undefined higher-order screen derivatives in its specular filter, and the presentation stacked two pixel-scale noise sources, so clean captures from one backend did not prove portable temporal behavior. After replacing the derivative filter, removing the CSS turbulence layer, and reducing shader noise to a static `1/255` dither, a bounded confirmation at 1440×1024 and 390×844 produced no page errors or horizontal overflow; the desktop 12-sample, 180×128 full-frame probe recorded peak temporal acceleration `2/255` and zero jumps at or above `12/255`. Recheck the originally affected physical GPU before production adoption.
