@@ -72,6 +72,8 @@ async function createChatHarness({
   logger = { info() {}, error() {} },
   createConnectionId = () => 'test-connection',
   settleImmediately = true,
+  rejectUnknownUpgrades = true,
+  handleUnknownUpgrade = false,
 } = {}) {
   const server = createServer()
   const clients = []
@@ -88,6 +90,7 @@ async function createChatHarness({
     rateLimitNow: now,
     logger,
     createConnectionId,
+    rejectUnknownUpgrades,
     createSession({ onEvent }) {
       emitEvent = onEvent
       return {
@@ -103,6 +106,13 @@ async function createChatHarness({
       }
     },
   })
+  if (handleUnknownUpgrade) {
+    server.on('upgrade', (request, socket) => {
+      const pathname = new URL(request.url, `http://${request.headers.host}`).pathname
+      if (pathname === '/chat') return
+      socket.end('HTTP/1.1 418 Vite HMR\r\nConnection: close\r\n\r\n')
+    })
+  }
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const port = server.address().port
@@ -206,6 +216,18 @@ test('closes unmatched WebSocket upgrades instead of leaving sockets open', asyn
   const harness = await createChatHarness()
   try {
     assert.match(await harness.rawUpgrade('/not-chat'), /404 Not Found/)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('leaves non-chat upgrades for the Vite development server', async () => {
+  const harness = await createChatHarness({
+    rejectUnknownUpgrades: false,
+    handleUnknownUpgrade: true,
+  })
+  try {
+    assert.match(await harness.rawUpgrade('/?token=vite-hmr'), /418 Vite HMR/)
   } finally {
     await harness.close()
   }

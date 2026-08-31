@@ -4,6 +4,15 @@ Emotion Orbit is an interactive Three.js conversation that translates emotional 
 
 The visual reading is deterministic and interpretive. It does not detect, diagnose, or treat a person's emotion or replace crisis or medical support.
 
+## Deployment targets
+
+The frontend has two explicit build modes:
+
+- `npm run build:static` creates `dist/` for GitHub Pages or another static host. It omits the chat interface and never opens a WebSocket; the six emotion controls remain interactive.
+- `npm run build:server` creates `dist/` with Pi chat enabled. Serve it with `npm run preview` or use Docker Compose so the same origin can provide `/chat`.
+
+`npm run build` is the safe static alias. The Docker image and `npm run dev` select server mode explicitly.
+
 ## Self-host with Docker Compose
 
 The supported production path is one Compose service containing the built frontend, Node/WebSocket server, and Pi CLI. It binds only to host loopback, creates no volumes, and stores no conversations or visual state.
@@ -85,13 +94,13 @@ The application is intentionally localhost-only. Do not change the port binding 
 
 ## Interaction
 
-- Write a freeform message and press Enter to send; use Shift+Enter for a new line.
-- Emotional language blends the liquid palette and distinct structural behavior immediately: buoyancy, expansion, attraction, orbit, pressure, sharpness, drift, trails, and refraction.
-- Choose Joy, Calm, Love, Wonder, Anger, or Melancholy to tune the field directly.
+- In a server build, write a freeform message and press Enter to send; use Shift+Enter for a new line.
+- In a static build, use Joy, Calm, Love, Wonder, Anger, or Melancholy to tune the field without chat or network access.
+- Emotional language in server mode blends the liquid palette and distinct structural behavior immediately: buoyancy, expansion, attraction, orbit, pressure, sharpness, drift, trails, and refraction.
 - Stop cancels an active Pi response. Retry resends the saved failed or cancelled message without duplicating it in the conversation.
 - Reconnect retries the same-origin Pi bridge; local field changes remain available while Pi is offline.
 - The liquid field remains ambient and does not track clicks or pointer movement.
-- Sending a message adds a restrained visual pulse.
+- Sending a server-mode message adds a restrained visual pulse.
 
 The scene respects `prefers-reduced-motion` with on-demand rendering, adapts visual quality from sustained frame measurements, and keeps all controls keyboard accessible.
 
@@ -149,11 +158,12 @@ npm run dev
 
 `PI_CHAT_PROVIDER` and `PI_CHAT_MODEL` may override the host Pi defaults. Development still creates isolated, non-persistent Pi RPC processes.
 
-Run the repository checks:
+Run the repository checks and build both deployment targets:
 
 ```bash
 npm test
-npm run build
+npm run build:static
+npm run build:server
 ```
 
 ## License

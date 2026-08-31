@@ -15,15 +15,15 @@ import {
 import { probeWebGLCapability } from './webgl-capability.js'
 
 const bridgeConfig = resolveBridgeConfig({
+  chatEnabled: import.meta.env.VITE_CHAT_ENABLED === 'true',
   pageLocation: location,
-  configuredUrl: import.meta.env.VITE_PI_CHAT_URL ?? '',
 })
 const localOnly = !bridgeSupportsChat(bridgeConfig)
 const productThesis = localOnly
-  ? 'Describe a feeling. The field translates your words into color and motion; Pi is unavailable on this static site.'
+  ? 'Explore the field through the emotion controls. Chat is disabled in this static build.'
   : 'Describe a feeling. Pi responds, and the field translates your words into color and motion.'
 const initialBridgeLabel = localOnly
-  ? 'Local field ready · Pi unavailable here'
+  ? 'Static visual mode'
   : 'Pi connecting'
 const initialConversation = localOnly
   ? '<article class="chat-message is-field"><span>Field</span><p>What is moving through you?</p></article>'
@@ -37,7 +37,7 @@ app.innerHTML = `
       <span class="brand-mark" aria-hidden="true"></span>
       <span>EMOTION ORBIT</span>
     </div>
-    <div class="service-cluster">
+    <div class="service-cluster"${localOnly ? ' hidden' : ''}>
       <div class="status" id="bridge-status" role="status" aria-live="polite">
         <span class="status-dot" id="bridge-dot" aria-hidden="true"></span>
         <span>${initialBridgeLabel}</span>
@@ -50,7 +50,7 @@ app.innerHTML = `
     <p class="product-thesis">${productThesis}</p>
     <p class="intro" id="emotion-copy">${EMOTIONS.wonder.copy}</p>
     <p class="field-transition" id="field-transition">Field resting in wonder.</p>
-    <section class="chat-panel" aria-label="${localOnly ? 'Local emotion field' : 'Conversation with Pi'}">
+    <section class="chat-panel" aria-label="${localOnly ? 'Local emotion field' : 'Conversation with Pi'}"${localOnly ? ' hidden' : ''}>
       <div class="chat-log" id="chat-log" role="log" aria-live="off">
         ${initialConversation}
       </div>

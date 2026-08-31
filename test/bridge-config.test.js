@@ -2,82 +2,50 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { bridgeSupportsChat, resolveBridgeConfig } from '../src/bridge-config.js'
 
-test('uses same-origin chat except on unconfigured GitHub Pages', () => {
+test('disables chat unless the build explicitly enables it', () => {
   assert.deepEqual(resolveBridgeConfig({
+    chatEnabled: false,
+    pageLocation: { protocol: 'http:', host: 'localhost:5173', hostname: 'localhost' },
+  }), {
+    mode: 'disabled',
+    url: null,
+  })
+  assert.deepEqual(resolveBridgeConfig({
+    chatEnabled: false,
+    pageLocation: {
+      protocol: 'https:',
+      host: 'delus.github.io',
+      hostname: 'delus.github.io',
+    },
+  }), {
+    mode: 'disabled',
+    url: null,
+  })
+})
+
+test('uses same-origin chat when the build enables it', () => {
+  assert.deepEqual(resolveBridgeConfig({
+    chatEnabled: true,
     pageLocation: { protocol: 'http:', host: 'localhost:5173', hostname: 'localhost' },
   }), {
     mode: 'same-origin',
     url: 'ws://localhost:5173/chat',
   })
-  assert.deepEqual(resolveBridgeConfig({
-    pageLocation: {
-      protocol: 'https:',
-      host: 'delus.github.io',
-      hostname: 'delus.github.io',
-    },
-  }), {
-    mode: 'local-only',
-    url: null,
-  })
 })
 
-test('accepts only credential-free WebSocket build-time bridge URLs', () => {
-  const pageLocation = {
-    protocol: 'https:',
-    host: 'delus.github.io',
-    hostname: 'delus.github.io',
-  }
-
+test('server builds keep chat on the bundled same-origin bridge', () => {
   assert.deepEqual(resolveBridgeConfig({
-    pageLocation,
+    chatEnabled: true,
+    pageLocation: { protocol: 'https:', host: 'emotion.example', hostname: 'emotion.example' },
     configuredUrl: 'wss://bridge.example/chat',
   }), {
-    mode: 'configured',
-    url: 'wss://bridge.example/chat',
-  })
-  assert.deepEqual(resolveBridgeConfig({
-    pageLocation,
-    configuredUrl: 'https://bridge.example/chat',
-  }), {
-    mode: 'local-only',
-    url: null,
-  })
-  assert.deepEqual(resolveBridgeConfig({
-    pageLocation,
-    configuredUrl: 'wss://token@bridge.example/chat',
-  }), {
-    mode: 'local-only',
-    url: null,
+    mode: 'same-origin',
+    url: 'wss://emotion.example/chat',
   })
 })
 
-test('only configured bridge modes start chat networking', () => {
+test('only the enabled same-origin mode starts chat networking', () => {
   assert.equal(bridgeSupportsChat({ mode: 'same-origin' }), true)
-  assert.equal(bridgeSupportsChat({ mode: 'configured' }), true)
-  assert.equal(bridgeSupportsChat({ mode: 'local-only' }), false)
-})
-
-test('rejects mixed-content bridge URLs while allowing ws on HTTP pages', () => {
-  assert.deepEqual(resolveBridgeConfig({
-    pageLocation: {
-      protocol: 'https:',
-      host: 'delus.github.io',
-      hostname: 'delus.github.io',
-    },
-    configuredUrl: 'ws://bridge.example/chat',
-  }), {
-    mode: 'local-only',
-    url: null,
-  })
-  assert.deepEqual(resolveBridgeConfig({
-    pageLocation: {
-      protocol: 'http:',
-      host: 'localhost:5173',
-      hostname: 'localhost',
-    },
-    configuredUrl: 'ws://localhost:8787/chat',
-  }), {
-    mode: 'configured',
-    url: 'ws://localhost:8787/chat',
-  })
+  assert.equal(bridgeSupportsChat({ mode: 'configured' }), false)
+  assert.equal(bridgeSupportsChat({ mode: 'disabled' }), false)
 })

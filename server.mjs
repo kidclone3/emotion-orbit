@@ -11,7 +11,7 @@ const httpServer = createServer()
 if (isDevelopment) {
   const { createServer: createViteServer } = await import('vite')
   const vite = await createViteServer({
-    appType: 'spa',
+    mode: 'server',
     server: {
       middlewareMode: true,
       hmr: { server: httpServer },
@@ -22,7 +22,10 @@ if (isDevelopment) {
   httpServer.on('request', createProductionRequestHandler())
 }
 
-const chatServer = attachChatWebSocketServer(httpServer, { trustProxy })
+const chatServer = attachChatWebSocketServer(httpServer, {
+  trustProxy,
+  rejectUnknownUpgrades: !isDevelopment,
+})
 httpServer.listen(port, host, () => {
   console.log(`Emotion Orbit listening on http://${host}:${port}`)
 })

@@ -153,6 +153,7 @@ export function attachChatWebSocketServer(
     rateLimitNow = Date.now,
     logger = console,
     createConnectionId = () => randomUUID().slice(0, 8),
+    rejectUnknownUpgrades = true,
   } = {},
 ) {
   const takePromptSlot = createPromptRateLimiter(rateLimitNow)
@@ -167,7 +168,7 @@ export function attachChatWebSocketServer(
       return
     }
     if (pathname !== '/chat') {
-      rejectUpgrade(socket, 404, 'Not Found')
+      if (rejectUnknownUpgrades) rejectUpgrade(socket, 404, 'Not Found')
       return
     }
     if (

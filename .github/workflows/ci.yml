@@ -28,8 +28,10 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test
-      - name: Build site
-        run: npm run build
+      - name: Build static site
+        run: npm run build:static
+      - name: Build server site
+        run: npm run build:server
       - name: Create non-secret container configuration
         run: |
           cat > .env <<'EOF'

@@ -1,5 +1,5 @@
 export function bridgeSupportsChat(config) {
-  return config.mode === 'same-origin' || config.mode === 'configured'
+  return config.mode === 'same-origin'
 }
 
 function sameOriginSocketUrl(pageLocation) {
@@ -7,28 +7,10 @@ function sameOriginSocketUrl(pageLocation) {
   return `${protocol}//${pageLocation.host}/chat`
 }
 
-export function resolveBridgeConfig({ pageLocation, configuredUrl = '' }) {
-  if (configuredUrl) {
-    try {
-      const url = new URL(configuredUrl)
-      const secureEnough = pageLocation.protocol !== 'https:' || url.protocol === 'wss:'
-      if (
-        ['ws:', 'wss:'].includes(url.protocol)
-        && secureEnough
-        && !url.username
-        && !url.password
-      ) {
-        return { mode: 'configured', url: url.href }
-      }
-    } catch {
-      // Invalid build-time values fail closed to local-only mode.
-    }
-    return { mode: 'local-only', url: null }
-  }
-
-  if (pageLocation.hostname.toLowerCase().endsWith('.github.io')) {
-    return { mode: 'local-only', url: null }
-  }
-
+export function resolveBridgeConfig({
+  chatEnabled = false,
+  pageLocation,
+}) {
+  if (!chatEnabled) return { mode: 'disabled', url: null }
   return { mode: 'same-origin', url: sameOriginSocketUrl(pageLocation) }
 }

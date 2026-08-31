@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node server.mjs --dev",
-    "build": "vite build",
+    "build": "npm run build:static",
+    "build:static": "vite build --mode static",
+    "build:server": "vite build --mode server",
     "preview": "node server.mjs",
     "test": "node --test"
   },
