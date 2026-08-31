@@ -418,6 +418,7 @@ h1 em{color:#d1d3cc;font-family:Georgia,serif;font-weight:400}
   padding:.5rem .35rem;
   overflow-wrap:anywhere;
   border:0;
+
   background:transparent;
   cursor:pointer;
   color:var(--muted);

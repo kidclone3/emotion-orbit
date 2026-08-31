@@ -1,0 +1,24 @@
+services:
+  emotion-orbit:
+    build: .
+    init: true
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 5173
+      PI_TELEMETRY: 0
+      TRUST_PROXY: 0
+    ports:
+      - "127.0.0.1:${EMOTION_ORBIT_PORT:-5173}:5173"
+    restart: "on-failure:3"
+    stop_grace_period: 5s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5173/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Build site
+        run: npm run build
+      - name: Create non-secret container configuration
+        run: |
+          cat > .env <<'EOF'
+          PI_CHAT_PROVIDER=openai
+          PI_CHAT_MODEL=gpt-4o-mini
+          PI_CHAT_API_KEY=not-a-real-key
+          PI_TELEMETRY=1
+          EMOTION_ORBIT_PORT=55173
+          EOF
+      - name: Validate Compose configuration
+        run: |
+          docker compose config
+          test "$(docker compose config --format json | jq -r '.services[\"emotion-orbit\"].environment.PI_TELEMETRY')" = "0"
+          test "$(docker compose config --format json | jq -r '.services[\"emotion-orbit\"].ports[0].host_ip')" = "127.0.0.1"
+      - name: Build container
+        run: docker compose build
+      - name: Start healthy container
+        run: docker compose up -d --wait
+      - name: Verify container contract
+        run: |
+          test "$(docker compose exec -T emotion-orbit id -u)" = "1000"
+          test "$(docker compose exec -T emotion-orbit pi --version)" = "0.84.4"
+          node --input-type=module -e "const base='http://127.0.0.1:55173'; const health=await fetch(base + '/healthz'); if (health.status !== 200 || JSON.stringify(await health.json()) !== '{\"status\":\"ok\"}') process.exit(1); const page=await fetch(base + '/'); if (page.status !== 200 || !((await page.text()).includes('id=\"app\"')) || page.headers.get('x-frame-options') !== 'DENY' || page.headers.get('x-content-type-options') !== 'nosniff') process.exit(2)"
+          test "$(docker compose port emotion-orbit 5173)" = "127.0.0.1:55173"
+      - name: Verify graceful shutdown
+        run: |
+          container_id="$(docker compose ps -a -q emotion-orbit)"
+          docker compose stop
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$container_id")" = "0"
+      - name: Remove container
+        if: always()
+        run: docker compose down --remove-orphans

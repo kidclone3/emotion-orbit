@@ -70,6 +70,7 @@ app.innerHTML = `
   </section>
   <div class="scene-wrap" id="scene-wrap" aria-hidden="true">
     <div class="scene" id="scene"></div>
+
   </div>
   <p class="render-status" id="render-status" role="status" aria-live="polite" hidden></p>
   <nav class="emotion-nav" aria-label="Select an emotional state">
@@ -78,6 +79,7 @@ app.innerHTML = `
         <span class="emotion-index">${EMOTIONS[key].number}</span><span>${EMOTIONS[key].label}</span>
       </button>`).join('')}
   </nav>
+
   <p class="sr-only" id="emotion-announcement" aria-live="polite"></p>
   <p class="sr-only" id="pi-announcement" aria-live="polite"></p>
 </main>`
@@ -507,7 +509,6 @@ retryButton.addEventListener('click', () => {
 reconnectButton.addEventListener('click', () => {
   piChat?.reconnect()
 })
-
 chatInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault()
