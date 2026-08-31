@@ -29,6 +29,62 @@ test('starts Pi RPC with every executable capability disabled', () => {
   assert.ok(args.includes('--system-prompt'))
 })
 
+test('passes explicit provider, model, and generic API key to Pi', () => {
+  const args = buildPiArgs({
+    PI_CHAT_PROVIDER: 'openai',
+    PI_CHAT_MODEL: 'gpt-4o-mini',
+    PI_CHAT_API_KEY: 'test-secret',
+  })
+
+  assert.deepEqual(args.slice(-6), [
+    '--provider',
+    'openai',
+    '--model',
+    'gpt-4o-mini',
+    '--api-key',
+    'test-secret',
+  ])
+})
+
+test('omits the generic API key flag for provider-native credentials', () => {
+  const args = buildPiArgs({
+    PI_CHAT_PROVIDER: 'amazon-bedrock',
+    PI_CHAT_MODEL: 'claude-sonnet',
+    AWS_PROFILE: 'emotion-orbit',
+  })
+
+  assert.equal(args.includes('--api-key'), false)
+  assert.deepEqual(args.slice(-4), [
+    '--provider',
+    'amazon-bedrock',
+    '--model',
+    'claude-sonnet',
+  ])
+})
+
+test('passes provider-native credentials unchanged to the Pi process', () => {
+  const child = createFakeChild()
+  const environment = {
+    PI_CHAT_PROVIDER: 'amazon-bedrock',
+    PI_CHAT_MODEL: 'claude-sonnet',
+    AWS_PROFILE: 'emotion-orbit',
+    AWS_REGION: 'us-east-1',
+  }
+  let spawned
+
+  const session = createPiRpcSession({
+    environment,
+    spawnProcess(command, args, options) {
+      spawned = { command, args, options }
+      return child
+    },
+  })
+
+  assert.equal(spawned.options.env.AWS_PROFILE, 'emotion-orbit')
+  assert.equal(spawned.args.includes('--api-key'), false)
+  session.close()
+})
+
 test('streams strict JSONL events and writes correlated prompts', async () => {
   const child = createFakeChild()
   const events = []

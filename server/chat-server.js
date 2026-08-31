@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import { WebSocket, WebSocketServer } from 'ws'
 import { createPiRpcSession } from './pi-rpc.js'
@@ -68,7 +69,8 @@ ${message}`
 export function isAllowedOrigin(origin, host) {
   if (!origin || !host) return false
   try {
-    return new URL(origin).host === host
+    const parsed = new URL(origin)
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host === host
   } catch {
     return false
   }
@@ -77,7 +79,7 @@ export function isAllowedOrigin(origin, host) {
 const LIVE_CHAT_LIMIT = 5
 const LIVE_CHAT_WINDOW_MS = 60_000
 
-function isLocalRequestHost(host) {
+export function isLocalRequestHost(host) {
   if (!host) return false
   try {
     const hostname = new URL(`http://${host}`).hostname.replace(/^\[|\]$/g, '').toLowerCase()
@@ -139,23 +141,41 @@ function send(socket, message) {
   }
 }
 
+function rejectUpgrade(socket, status, reason) {
+  socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`)
+  socket.destroy()
+}
+
 export function attachChatWebSocketServer(
   server,
   {
     createSession = createPiRpcSession,
     trustProxy = false,
     rateLimitNow = Date.now,
+    logger = console,
+    createConnectionId = () => randomUUID().slice(0, 8),
   } = {},
 ) {
   const takePromptSlot = createPromptRateLimiter(rateLimitNow)
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 8192 })
 
   server.on('upgrade', (request, socket, head) => {
-    const pathname = new URL(request.url, `http://${request.headers.host}`).pathname
-    if (pathname !== '/chat') return
-    if (!isAllowedOrigin(request.headers.origin, request.headers.host)) {
-      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
-      socket.destroy()
+    let pathname
+    try {
+      pathname = new URL(request.url, `http://${request.headers.host}`).pathname
+    } catch {
+      rejectUpgrade(socket, 400, 'Bad Request')
+      return
+    }
+    if (pathname !== '/chat') {
+      rejectUpgrade(socket, 404, 'Not Found')
+      return
+    }
+    if (
+      !isLocalRequestHost(request.headers.host) ||
+      !isAllowedOrigin(request.headers.origin, request.headers.host)
+    ) {
+      rejectUpgrade(socket, 403, 'Forbidden')
       return
     }
 
@@ -165,28 +185,32 @@ export function attachChatWebSocketServer(
   })
 
   sockets.on('connection', (socket, request) => {
+    const connectionId = createConnectionId()
     let busy = false
     let closed = false
     const address = clientAddress(request, trustProxy)
+    logger.info?.('Chat connection opened.', { connectionId })
     const rateLimitKey =
       isLocalRequestHost(request.headers.host) && isLoopbackAddress(address) ? null : address
     const session = createSession({
       onEvent(event) {
         const message = eventToClientMessage(event)
         if (!message) return
-        if (message.type === 'assistant_done' || message.type === 'assistant_error') busy = false
+        if (message.type === 'assistant_done') busy = false
         send(socket, message)
       },
       onError() {
-        busy = false
+        logger.error?.('Pi session error.', { connectionId })
         send(socket, {
           type: 'assistant_error',
           message: 'The Pi bridge is unavailable. Check the server configuration and try again.',
         })
+        closeSession('session-error')
       },
-      onExit({ code }) {
+      onExit({ code, signal }) {
         if (closed) return
         busy = false
+        logger.error?.('Pi session exited.', { connectionId, code, signal })
         send(socket, {
           type: 'bridge_status',
           status: 'offline',
@@ -211,6 +235,11 @@ export function attachChatWebSocketServer(
         return
       }
       if (message.type !== 'prompt') return
+      const userMessage = String(message.message ?? '').trim()
+      if (!userMessage) {
+        send(socket, { type: 'assistant_error', message: 'A message is required.' })
+        return
+      }
       if (busy) {
         send(socket, {
           type: 'assistant_error',
@@ -232,7 +261,7 @@ export function attachChatWebSocketServer(
       }
 
       try {
-        session.prompt(buildAgentPrompt(message.message, message.visual), message.id)
+        session.prompt(buildAgentPrompt(userMessage, message.visual), message.id)
         busy = true
         send(socket, { type: 'prompt_accepted', id: message.id })
       } catch (error) {
@@ -240,15 +269,21 @@ export function attachChatWebSocketServer(
       }
     })
 
-    socket.on('close', () => {
+    function closeSession(reason) {
+      if (closed) return
       closed = true
       session.close()
-    })
-    socket.on('error', () => {
-      closed = true
-      session.close()
-    })
+      logger.info?.('Chat connection closed.', { connectionId, reason })
+    }
+
+    socket.on('close', () => closeSession('close'))
+    socket.on('error', () => closeSession('error'))
   })
 
-  return sockets
+  return {
+    close(callback = () => {}) {
+      for (const socket of sockets.clients) socket.terminate()
+      sockets.close(callback)
+    },
+  }
 }

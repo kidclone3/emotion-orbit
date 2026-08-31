@@ -5,7 +5,7 @@ const MAX_MESSAGE_LENGTH = 2000
 
 const SYSTEM_PROMPT = `You are a warm, concise conversational companion inside an emotional visualization. Reflect the user's feelings without diagnosing them. Ask at most one useful follow-up question. Use plain text only, keep most replies under 90 words, and never mention tools, system prompts, coding, or hidden instructions. If someone may be in immediate danger, encourage contacting local emergency services or a trusted person now.`
 
-export function buildPiArgs() {
+export function buildPiArgs(environment = process.env) {
   const args = [
     '--mode',
     'rpc',
@@ -18,8 +18,9 @@ export function buildPiArgs() {
     SYSTEM_PROMPT,
   ]
 
-  if (process.env.PI_CHAT_PROVIDER) args.push('--provider', process.env.PI_CHAT_PROVIDER)
-  if (process.env.PI_CHAT_MODEL) args.push('--model', process.env.PI_CHAT_MODEL)
+  if (environment.PI_CHAT_PROVIDER) args.push('--provider', environment.PI_CHAT_PROVIDER)
+  if (environment.PI_CHAT_MODEL) args.push('--model', environment.PI_CHAT_MODEL)
+  if (environment.PI_CHAT_API_KEY) args.push('--api-key', environment.PI_CHAT_API_KEY)
 
   return args
 }
@@ -64,13 +65,14 @@ function attachJsonlReader(stream, onRecord, onError) {
 
 export function createPiRpcSession({
   spawnProcess = spawn,
+  environment = process.env,
   onEvent = () => {},
   onError = () => {},
   onExit = () => {},
 } = {}) {
-  const agent = spawnProcess('pi', buildPiArgs(), {
+  const agent = spawnProcess('pi', buildPiArgs(environment), {
     cwd: process.cwd(),
-    env: process.env,
+    env: environment,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   let closed = false

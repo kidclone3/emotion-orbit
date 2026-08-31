@@ -1,5 +1,6 @@
 import { once } from 'node:events'
 import { createServer } from 'node:http'
+import { connect } from 'node:net'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { WebSocket } from 'ws'
@@ -65,19 +66,40 @@ test('tells Pi that the current color is already visible in the webpage', () => 
   assert.equal(buildAgentPrompt('hello', { label: 'Fake', primary: 'blue', accent: '#ffffff' }), 'hello')
 })
 
-async function createChatHarness({ now = Date.now, trustProxy = false } = {}) {
+async function createChatHarness({
+  now = Date.now,
+  trustProxy = false,
+  logger = { info() {}, error() {} },
+  createConnectionId = () => 'test-connection',
+  settleImmediately = true,
+} = {}) {
   const server = createServer()
   const clients = []
+  const prompts = []
+  let emitEvent = () => {}
+  let chatClosed = false
+  let closedSessions = 0
+  let resolveSessionClosed
+  const sessionClosed = new Promise((resolve) => {
+    resolveSessionClosed = resolve
+  })
   const chatServer = attachChatWebSocketServer(server, {
     trustProxy,
     rateLimitNow: now,
+    logger,
+    createConnectionId,
     createSession({ onEvent }) {
+      emitEvent = onEvent
       return {
-        prompt() {
-          queueMicrotask(() => onEvent({ type: 'agent_settled' }))
+        prompt(message) {
+          prompts.push(message)
+          if (settleImmediately) queueMicrotask(() => onEvent({ type: 'agent_settled' }))
         },
         abort() {},
-        close() {},
+        close() {
+          closedSessions += 1
+          resolveSessionClosed()
+        },
       }
     },
   })
@@ -98,6 +120,46 @@ async function createChatHarness({ now = Date.now, trustProxy = false } = {}) {
       clients.push(socket)
       return socket
     },
+    async expectRejected(host) {
+      return new Promise((resolve, reject) => {
+        const socket = new WebSocket(`ws://127.0.0.1:${port}/chat`, {
+          origin: `http://${host}`,
+          headers: { Host: host },
+        })
+        socket.once('open', () => {
+          socket.close()
+          reject(new Error('Expected the WebSocket upgrade to be rejected.'))
+        })
+        socket.once('unexpected-response', (_request, response) => {
+          const status = response.statusCode
+          response.resume()
+          resolve(status)
+        })
+        socket.once('error', () => resolve(null))
+      })
+    },
+    async rawUpgrade(pathname) {
+      const socket = connect(port, '127.0.0.1')
+      await once(socket, 'connect')
+      socket.write(
+        `GET ${pathname} HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,
+      )
+      const response = await Promise.race([
+        once(socket, 'data').then(([chunk]) => chunk.toString()),
+        new Promise((resolve) => setTimeout(() => resolve(null), 100)),
+      ])
+      socket.destroy()
+      return response
+    },
+    emit: (event) => emitEvent(event),
+    promptCount: () => prompts.length,
+    closedSessionCount: () => closedSessions,
+    waitForSessionClose: () => sessionClosed,
+    async closeChatServer() {
+      if (chatClosed) return
+      await new Promise((resolve) => chatServer.close(resolve))
+      chatClosed = true
+    },
     async close() {
       await Promise.all(
         clients.map(async (socket) => {
@@ -106,24 +168,48 @@ async function createChatHarness({ now = Date.now, trustProxy = false } = {}) {
           await once(socket, 'close')
         }),
       )
-      await new Promise((resolve) => chatServer.close(resolve))
-      await new Promise((resolve) => server.close(resolve))
+      if (!chatClosed) {
+        await new Promise((resolve) => chatServer.close(resolve))
+        chatClosed = true
+      }
+      if (server.listening) {
+        server.close()
+        await once(server, 'close')
+      }
     },
   }
 }
 
-function sendPrompt(socket, id) {
+function sendPrompt(socket, id, message = `message ${id}`, visual) {
   return new Promise((resolve) => {
     function handleMessage(payload) {
-      const message = JSON.parse(payload.toString())
-      if (message.type !== 'assistant_done' && message.type !== 'assistant_error') return
+      const response = JSON.parse(payload.toString())
+      if (response.type !== 'assistant_done' && response.type !== 'assistant_error') return
       socket.off('message', handleMessage)
-      resolve(message)
+      resolve(response)
     }
     socket.on('message', handleMessage)
-    socket.send(JSON.stringify({ type: 'prompt', id, message: `message ${id}` }))
+    socket.send(JSON.stringify({ type: 'prompt', id, message, visual }))
   })
 }
+
+test('rejects non-loopback hosts even when Origin matches Host', async () => {
+  const harness = await createChatHarness()
+  try {
+    assert.equal(await harness.expectRejected('attacker.example'), 403)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('closes unmatched WebSocket upgrades instead of leaving sockets open', async () => {
+  const harness = await createChatHarness()
+  try {
+    assert.match(await harness.rawUpgrade('/not-chat'), /404 Not Found/)
+  } finally {
+    await harness.close()
+  }
+})
 
 test('allows unlimited local chat messages', async () => {
   const harness = await createChatHarness()
@@ -132,6 +218,32 @@ test('allows unlimited local chat messages', async () => {
     for (let index = 0; index < 8; index += 1) {
       assert.equal((await sendPrompt(socket, `local-${index}`)).type, 'assistant_done')
     }
+  } finally {
+    await harness.close()
+  }
+})
+
+test('closes each Pi session and logs lifecycle without conversation content', async () => {
+  const records = []
+  const harness = await createChatHarness({
+    logger: {
+      info: (...args) => records.push(args),
+      error: (...args) => records.push(args),
+    },
+    createConnectionId: () => 'connection-private',
+  })
+  try {
+    const socket = await harness.connect('localhost')
+    socket.send(
+      JSON.stringify({ type: 'prompt', id: 'private', message: 'PRIVATE-MARKER' }),
+    )
+    socket.close()
+    await once(socket, 'close')
+    await harness.waitForSessionClose()
+
+    assert.equal(harness.closedSessionCount(), 1)
+    assert.doesNotMatch(JSON.stringify(records), /PRIVATE-MARKER/)
+    assert.match(JSON.stringify(records), /connection-private/)
   } finally {
     await harness.close()
   }
@@ -150,24 +262,76 @@ test('does not let a public client bypass the limit with a localhost host header
   }
 })
 
-test('limits each live-domain client to five messages per rolling minute', async () => {
-  let now = 10_000
-  const harness = await createChatHarness({ now: () => now, trustProxy: true })
+test('rejects blank user messages before visual context reaches Pi', async () => {
+  const harness = await createChatHarness()
   try {
-    const firstClient = await harness.connect('emotion.example', '203.0.113.10')
-    for (let index = 0; index < 5; index += 1) {
-      assert.equal((await sendPrompt(firstClient, `live-${index}`)).type, 'assistant_done')
+    const socket = await harness.connect('localhost')
+    const response = await sendPrompt(socket, 'blank', '   ', {
+      label: 'Joy',
+      primary: '#ffd166',
+      accent: '#ef476f',
+    })
+
+    assert.equal(response.type, 'assistant_error')
+    assert.match(response.message, /message is required/i)
+    assert.equal(harness.promptCount(), 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('keeps a connection busy until Pi settles after a provider error', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const first = sendPrompt(socket, 'first')
+    await new Promise((resolve) => setImmediate(resolve))
+    harness.emit({
+      type: 'agent_end',
+      willRetry: false,
+      messages: [
+        {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: '429: insufficient balance',
+        },
+      ],
+    })
+    assert.equal((await first).type, 'assistant_error')
+
+    const second = await Promise.race([
+      sendPrompt(socket, 'second'),
+      new Promise((resolve) => setTimeout(() => resolve(null), 100)),
+    ])
+    assert.match(second?.message ?? '', /still responding/i)
+    assert.equal(harness.promptCount(), 1)
+
+    harness.emit({ type: 'agent_settled' })
+    const third = sendPrompt(socket, 'third')
+    for (let index = 0; index < 20 && harness.promptCount() !== 2; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
     }
+    assert.equal(harness.promptCount(), 2)
+    harness.emit({ type: 'agent_settled' })
+    assert.equal((await third).type, 'assistant_done')
+  } finally {
+    await harness.close()
+  }
+})
 
-    const limited = await sendPrompt(firstClient, 'live-5')
-    assert.equal(limited.type, 'assistant_error')
-    assert.match(limited.message, /5 messages per minute/i)
+test('closing the chat server terminates active Pi sessions', async () => {
+  const harness = await createChatHarness()
+  try {
+    await harness.connect('localhost')
+    const shutdown = harness.closeChatServer()
+    const closed = await Promise.race([
+      harness.waitForSessionClose().then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 100)),
+    ])
 
-    const secondClient = await harness.connect('emotion.example', '203.0.113.11')
-    assert.equal((await sendPrompt(secondClient, 'other-client')).type, 'assistant_done')
-
-    now += 60_000
-    assert.equal((await sendPrompt(firstClient, 'after-window')).type, 'assistant_done')
+    assert.equal(closed, true)
+    await shutdown
+    assert.equal(harness.closedSessionCount(), 1)
   } finally {
     await harness.close()
   }
