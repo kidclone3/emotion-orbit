@@ -1,6 +1,6 @@
 # Emotion Orbit
 
-Emotion Orbit is an interactive Three.js conversation that translates emotional language into color, light, analytic liquid folds, flow, and refraction while an isolated Pi agent streams a reply.
+Emotion Orbit is a bounded AI-character story encounter. An isolated Pi agent responds through character and user speech bubbles positioned over an ambient forest scene.
 
 The visual reading is deterministic and interpretive. It does not detect, diagnose, or treat a person's emotion or replace crisis or medical support.
 
@@ -8,10 +8,10 @@ The visual reading is deterministic and interpretive. It does not detect, diagno
 
 The frontend has two explicit build modes:
 
-- `npm run build:static` creates `dist/` for GitHub Pages or another static host. It omits the chat interface and never opens a WebSocket; the six emotion controls remain interactive.
-- `npm run build:server` creates `dist/` with Pi chat enabled. Serve it with `npm run preview` or use Docker Compose so the same origin can provide `/chat`.
+- `pnpm run build:static` creates `dist/` for GitHub Pages or another static host. It presents the encounter scene as a non-networked preview and never opens a WebSocket.
+- `pnpm run build:server` creates `dist/` with the Pi-backed encounter enabled. Serve it with `pnpm preview` or use Docker Compose so the same origin can provide `/chat`.
 
-`npm run build` is the safe static alias. The Docker image and `npm run dev` select server mode explicitly.
+`pnpm build` is the safe static alias. The Docker image and `pnpm dev` select server mode explicitly.
 
 ## Self-host with Docker Compose
 
@@ -151,9 +151,9 @@ No database or volume cleanup is necessary.
 Native development uses the host Node.js and Pi configuration:
 
 ```bash
-npm install
+pnpm install
 pi --version
-npm run dev
+pnpm dev
 ```
 
 `PI_CHAT_PROVIDER` and `PI_CHAT_MODEL` may override the host Pi defaults. Development still creates isolated, non-persistent Pi RPC processes.
@@ -161,9 +161,9 @@ npm run dev
 Run the repository checks and build both deployment targets:
 
 ```bash
-npm test
-npm run build:static
-npm run build:server
+pnpm test
+pnpm run build:static
+pnpm run build:server
 ```
 
 ## License

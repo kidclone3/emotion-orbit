@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import { WebSocket, WebSocketServer } from 'ws'
 import { createPiRpcSession } from './pi-rpc.js'
+import {
+  buildRepairPrompt,
+  buildRoleplayPrompt,
+  parseRoleplayTurn,
+} from './roleplay-turn.js'
 
 export function eventToClientMessage(event) {
   if (
@@ -154,6 +159,9 @@ export function attachChatWebSocketServer(
     logger = console,
     createConnectionId = () => randomUUID().slice(0, 8),
     rejectUnknownUpgrades = true,
+    turnTimeoutMs = 30_000,
+    setTurnTimeout = setTimeout,
+    clearTurnTimeout = clearTimeout,
   } = {},
 ) {
   const takePromptSlot = createPromptRateLimiter(rateLimitNow)
@@ -188,12 +196,104 @@ export function attachChatWebSocketServer(
     const connectionId = createConnectionId()
     let busy = false
     let closed = false
+    let encounterStage = 'story'
+    const encounterHistory = []
+    let activeEncounter = null
+    let encounterBuffer = ''
+    let turnTimer = null
     const address = clientAddress(request, trustProxy)
     logger.info?.('Chat connection opened.', { connectionId })
     const rateLimitKey =
       isLocalRequestHost(request.headers.host) && isLoopbackAddress(address) ? null : address
+    function clearActiveTurnTimer() {
+      if (turnTimer === null) return
+      clearTurnTimeout(turnTimer)
+      turnTimer = null
+    }
+
+    function startTurnTimer() {
+      clearActiveTurnTimer()
+      turnTimer = setTurnTimeout(() => {
+        turnTimer = null
+        if (!activeEncounter) return
+        activeEncounter.timedOut = true
+        encounterBuffer = ''
+        session.abort()
+      }, turnTimeoutMs)
+    }
+
     const session = createSession({
       onEvent(event) {
+        if (activeEncounter) {
+          if (activeEncounter.cancelled || activeEncounter.timedOut) {
+            if (event.type === 'agent_settled') {
+              if (activeEncounter.timedOut) {
+                send(socket, {
+                  type: 'assistant_error',
+                  errorKind: 'timeout',
+                  message: 'Alone took too long to respond. Retry or close this encounter.',
+                })
+              } else {
+                send(socket, { type: 'encounter_cancelled', id: activeEncounter.id })
+              }
+              activeEncounter = null
+              encounterBuffer = ''
+              busy = false
+            }
+            return
+          }
+          if (
+            event.type === 'message_update'
+            && event.assistantMessageEvent?.type === 'text_delta'
+          ) {
+            encounterBuffer += event.assistantMessageEvent.delta
+            return
+          }
+          if (event.type === 'agent_settled') {
+            const result = parseRoleplayTurn(encounterBuffer, activeEncounter.expectedStage)
+            if (result.ok) {
+              clearActiveTurnTimer()
+              encounterHistory.push(
+                {
+                  role: 'user',
+                  text: activeEncounter.message,
+                  inputKind: activeEncounter.inputKind,
+                },
+                {
+                  role: 'character',
+                  text: result.value.text,
+                  stage: result.value.stage,
+                },
+              )
+              encounterStage = result.value.stage
+              send(socket, {
+                type: 'encounter_turn',
+                id: activeEncounter.id,
+                turn: result.value,
+              })
+            } else if (activeEncounter.repairAttempt === 0) {
+              activeEncounter.repairAttempt = 1
+              encounterBuffer = ''
+              session.prompt(
+                buildRepairPrompt(activeEncounter.expectedStage, result.errors),
+                `${activeEncounter.id}:repair`,
+              )
+              startTurnTimer()
+              return
+            } else {
+              clearActiveTurnTimer()
+              send(socket, {
+                type: 'assistant_error',
+                errorKind: 'validation',
+                message: 'Alone returned an invalid response. Retry this turn.',
+              })
+            }
+            activeEncounter = null
+            encounterBuffer = ''
+            busy = false
+            return
+          }
+        }
         const message = eventToClientMessage(event)
         if (!message) return
         if (message.type === 'assistant_done') busy = false
@@ -231,7 +331,72 @@ export function attachChatWebSocketServer(
       }
 
       if (message.type === 'abort') {
+        if (activeEncounter) {
+          activeEncounter.cancelled = true
+          clearActiveTurnTimer()
+        }
         session.abort()
+        return
+      }
+      if (message.type === 'encounter_prompt') {
+        const request = message.request ?? {}
+        const expectedStage = {
+          story: 'follow-up',
+          'follow-up': 'mirror',
+          mirror: 'closure',
+        }[encounterStage]
+        const expectedInputKind = {
+          story: 'story',
+          'follow-up': 'follow_up_answer',
+          mirror: 'correction_or_confirmation',
+        }[encounterStage]
+        const userMessage = String(request.message ?? '').trim()
+        if (
+          !userMessage
+          || userMessage.length > 2000
+          || request.currentStage !== encounterStage
+          || request.expectedStage !== expectedStage
+          || request.inputKind !== expectedInputKind
+        ) {
+          send(socket, {
+            type: 'assistant_error',
+            errorKind: 'request',
+            message: 'The encounter request does not match the current stage.',
+          })
+          return
+        }
+        if (busy) {
+          send(socket, {
+            type: 'assistant_error',
+            message: 'Pi is still responding. Wait for the current response to finish.',
+          })
+          return
+        }
+        try {
+          activeEncounter = {
+            id: String(request.id ?? ''),
+            expectedStage,
+            message: userMessage,
+            inputKind: expectedInputKind,
+            repairAttempt: 0,
+          }
+          encounterBuffer = ''
+          session.prompt(buildRoleplayPrompt({
+            message: userMessage,
+            currentStage: encounterStage,
+            expectedStage,
+            inputKind: expectedInputKind,
+            history: encounterHistory.map((turn) => ({ ...turn })),
+          }), activeEncounter.id)
+          busy = true
+          startTurnTimer()
+          send(socket, { type: 'prompt_accepted', id: activeEncounter.id })
+        } catch (error) {
+          clearActiveTurnTimer()
+          activeEncounter = null
+          encounterBuffer = ''
+          send(socket, { type: 'assistant_error', message: error.message })
+        }
         return
       }
       if (message.type !== 'prompt') return
@@ -272,6 +437,7 @@ export function attachChatWebSocketServer(
     function closeSession(reason) {
       if (closed) return
       closed = true
+      clearActiveTurnTimer()
       session.close()
       logger.info?.('Chat connection closed.', { connectionId, reason })
     }

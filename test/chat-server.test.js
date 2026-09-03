@@ -79,6 +79,8 @@ async function createChatHarness({
   const clients = []
   const prompts = []
   let emitEvent = () => {}
+  let turnTimeoutCallback = null
+  let aborts = 0
   let chatClosed = false
   let closedSessions = 0
   let resolveSessionClosed
@@ -91,6 +93,13 @@ async function createChatHarness({
     logger,
     createConnectionId,
     rejectUnknownUpgrades,
+    setTurnTimeout(callback) {
+      turnTimeoutCallback = callback
+      return 1
+    },
+    clearTurnTimeout() {
+      turnTimeoutCallback = null
+    },
     createSession({ onEvent }) {
       emitEvent = onEvent
       return {
@@ -98,7 +107,9 @@ async function createChatHarness({
           prompts.push(message)
           if (settleImmediately) queueMicrotask(() => onEvent({ type: 'agent_settled' }))
         },
-        abort() {},
+        abort() {
+          aborts += 1
+        },
         close() {
           closedSessions += 1
           resolveSessionClosed()
@@ -163,6 +174,15 @@ async function createChatHarness({
     },
     emit: (event) => emitEvent(event),
     promptCount: () => prompts.length,
+    prompts: () => [...prompts],
+    abortCount: () => aborts,
+    fireTurnTimeout() {
+      if (!turnTimeoutCallback) return false
+      const callback = turnTimeoutCallback
+      turnTimeoutCallback = null
+      callback()
+      return true
+    },
     closedSessionCount: () => closedSessions,
     waitForSessionClose: () => sessionClosed,
     async closeChatServer() {
@@ -202,6 +222,260 @@ function sendPrompt(socket, id, message = `message ${id}`, visual) {
     socket.send(JSON.stringify({ type: 'prompt', id, message, visual }))
   })
 }
+
+function waitForMessageType(socket, type, timeoutMs = 100) {
+  return Promise.race([
+    new Promise((resolve) => {
+      function handleMessage(payload) {
+        const response = JSON.parse(payload.toString())
+        if (response.type !== type) return
+        socket.off('message', handleMessage)
+        resolve(response)
+      }
+      socket.on('message', handleMessage)
+    }),
+    new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ])
+}
+
+test('validates a complete encounter turn before sending it to the browser', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const turnPromise = waitForMessageType(socket, 'encounter_turn')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'encounter-1',
+        message: 'Everyone left before I could say goodbye.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    assert.deepEqual(await acceptedPromise, { type: 'prompt_accepted', id: 'encounter-1' })
+    assert.match(harness.prompts()[0], /expected response stage is "follow-up"/i)
+    const turn = {
+      schemaVersion: 1,
+      stage: 'follow-up',
+      speaker: 'alone',
+      speechAct: 'reflect_and_ask',
+      text: 'You were left without a goodbye. What did you wish they had heard?',
+      storyReference: 'left without a goodbye',
+      tentativeMeaning: null,
+      safetyMode: 'normal',
+    }
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify(turn) },
+    })
+    harness.emit({ type: 'agent_settled' })
+
+    assert.deepEqual(await turnPromise, {
+      type: 'encounter_turn',
+      id: 'encounter-1',
+      turn,
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('builds later encounter prompts from server-owned validated history', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const firstTurnPromise = waitForMessageType(socket, 'encounter_turn')
+    const firstAcceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'history-1',
+        message: 'Everyone left before I could say goodbye.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [{ role: 'user', text: 'UNTRUSTED-BROWSER-HISTORY' }],
+      },
+    }))
+    await firstAcceptedPromise
+    const followUp = {
+      schemaVersion: 1,
+      stage: 'follow-up',
+      speaker: 'alone',
+      speechAct: 'reflect_and_ask',
+      text: 'You were left without a goodbye. What did you wish they had heard?',
+      storyReference: 'left without a goodbye',
+      tentativeMeaning: null,
+      safetyMode: 'normal',
+    }
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify(followUp) },
+    })
+    harness.emit({ type: 'agent_settled' })
+    await firstTurnPromise
+
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'history-2',
+        message: 'I wanted them to know the work mattered to me.',
+        currentStage: 'follow-up',
+        expectedStage: 'mirror',
+        inputKind: 'follow_up_answer',
+        history: [{ role: 'user', text: 'UNTRUSTED-BROWSER-HISTORY' }],
+      },
+    }))
+    await acceptedPromise
+
+    assert.match(harness.prompts()[1], /Everyone left before I could say goodbye\./)
+    assert.match(harness.prompts()[1], /You were left without a goodbye\./)
+    assert.match(harness.prompts()[1], /I wanted them to know the work mattered to me\./)
+    assert.doesNotMatch(harness.prompts()[1], /UNTRUSTED-BROWSER-HISTORY/)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('repairs one invalid model response before exposing a turn', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    const turnPromise = waitForMessageType(socket, 'encounter_turn')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'repair-1',
+        message: 'I felt overlooked.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    await acceptedPromise
+
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'not json' },
+    })
+    harness.emit({ type: 'agent_settled' })
+
+    assert.equal(harness.promptCount(), 2)
+    assert.match(harness.prompts()[1], /repair your previous response/i)
+
+    const repaired = {
+      schemaVersion: 1,
+      stage: 'follow-up',
+      speaker: 'alone',
+      speechAct: 'reflect_and_ask',
+      text: 'You felt overlooked. What did you need them to notice?',
+      storyReference: 'felt overlooked',
+      tentativeMeaning: null,
+      safetyMode: 'normal',
+    }
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify(repaired) },
+    })
+    harness.emit({ type: 'agent_settled' })
+
+    assert.deepEqual(await turnPromise, {
+      type: 'encounter_turn',
+      id: 'repair-1',
+      turn: repaired,
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('waits for Pi to settle after timeout before allowing retry', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'timeout-1',
+        message: 'I keep replaying the meeting.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    await acceptedPromise
+
+    const earlyErrorPromise = waitForMessageType(socket, 'assistant_error', 20)
+    assert.equal(harness.fireTurnTimeout(), true)
+    assert.equal(harness.abortCount(), 1)
+    assert.equal(await earlyErrorPromise, null)
+
+    const errorPromise = waitForMessageType(socket, 'assistant_error')
+    harness.emit({ type: 'agent_settled' })
+    assert.deepEqual(await errorPromise, {
+      type: 'assistant_error',
+      errorKind: 'timeout',
+      message: 'Alone took too long to respond. Retry or close this encounter.',
+    })
+
+    const retryAccepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'timeout-retry',
+        message: 'I keep replaying the meeting.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    assert.deepEqual(await retryAccepted, { type: 'prompt_accepted', id: 'timeout-retry' })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('waits for Pi to settle before confirming encounter cancellation', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'cancel-1',
+        message: 'I want to stop here.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    await acceptedPromise
+
+    const cancelledPromise = waitForMessageType(socket, 'encounter_cancelled')
+    socket.send(JSON.stringify({ type: 'abort' }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(harness.abortCount(), 1)
+    harness.emit({ type: 'agent_settled' })
+
+    assert.deepEqual(await cancelledPromise, {
+      type: 'encounter_cancelled',
+      id: 'cancel-1',
+    })
+  } finally {
+    await harness.close()
+  }
+})
 
 test('rejects non-loopback hosts even when Origin matches Host', async () => {
   const harness = await createChatHarness()

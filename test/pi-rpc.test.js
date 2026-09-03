@@ -27,6 +27,9 @@ test('starts Pi RPC with every executable capability disabled', () => {
   assert.ok(args.includes('--no-context-files'))
   assert.ok(args.includes('--no-session'))
   assert.ok(args.includes('--system-prompt'))
+  const systemPrompt = args[args.indexOf('--system-prompt') + 1]
+  assert.match(systemPrompt, /fictional AI character/i)
+  assert.match(systemPrompt, /JSON object/i)
 })
 
 test('passes explicit provider, model, and generic API key to Pi', () => {
@@ -125,7 +128,16 @@ test('rejects empty and oversized prompts before writing to Pi', () => {
   const session = createPiRpcSession({ spawnProcess: () => child })
 
   assert.throws(() => session.prompt('   ', 'empty'), /message is required/i)
-  assert.throws(() => session.prompt('x'.repeat(2001), 'large'), /2,000 characters/i)
+  assert.throws(() => session.prompt('x'.repeat(12001), 'large'), /12,000 characters/i)
+
+  session.close()
+})
+
+test('accepts a bounded role-play prompt containing schema and in-memory context', () => {
+  const child = createFakeChild()
+  const session = createPiRpcSession({ spawnProcess: () => child })
+
+  assert.doesNotThrow(() => session.prompt('x'.repeat(6000), 'roleplay'))
 
   session.close()
 })

@@ -84,6 +84,28 @@ test('forwards browser messages and correlated prompts', () => {
   assert.deepEqual(messages, [{ type: 'assistant_delta', delta: 'I hear you.' }])
 })
 
+test('sends a bounded encounter request without visual or layout commands', () => {
+  const client = createPiChatClient({
+    WebSocketImpl: FakeWebSocket,
+    url: 'ws://localhost/chat',
+  })
+  const request = {
+    id: 'encounter-1',
+    message: 'I felt forgotten.',
+    currentStage: 'story',
+    expectedStage: 'follow-up',
+    inputKind: 'story',
+    history: [],
+  }
+
+  client.sendEncounter(request)
+
+  assert.deepEqual(JSON.parse(client.socket.sent[0]), {
+    type: 'encounter_prompt',
+    request,
+  })
+})
+
 test('reconnects once after an unexpected close with bounded backoff', () => {
   const timers = createFakeTimers()
   const statuses = []
