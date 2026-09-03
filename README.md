@@ -1,6 +1,6 @@
 # Emotion Orbit
 
-Emotion Orbit is a bounded AI-character story encounter. An isolated Pi agent responds through character and user speech bubbles positioned over an ambient forest scene.
+Emotion Orbit explores emotional stories through two bounded experiences: an interactive local liquid field for static hosting and a Pi-backed AI-character encounter for self-hosting. In the role-play, an isolated Pi agent responds through character and user speech bubbles positioned over an ambient forest scene.
 
 The visual reading is deterministic and interpretive. It does not detect, diagnose, or treat a person's emotion or replace crisis or medical support.
 
@@ -8,7 +8,7 @@ The visual reading is deterministic and interpretive. It does not detect, diagno
 
 The frontend has two explicit build modes:
 
-- `pnpm run build:static` creates `dist/` for GitHub Pages or another static host. It presents the encounter scene as a non-networked preview and never opens a WebSocket.
+- `pnpm run build:static` creates `dist/` for GitHub Pages or another static host. It preserves the interactive local liquid-field experience and never opens a WebSocket.
 - `pnpm run build:server` creates `dist/` with the Pi-backed encounter enabled. Serve it with `pnpm preview` or use Docker Compose so the same origin can provide `/chat`.
 
 `pnpm build` is the safe static alias. The Docker image and `pnpm dev` select server mode explicitly.
@@ -87,22 +87,21 @@ The application is intentionally localhost-only. Do not change the port binding 
 
 - Emotion Orbit does not persist prompts, replies, conversations, or visual state.
 - Refreshing, disconnecting, or recreating the container starts a clean session.
-- Prompts and the current validated visual label/colors leave the machine through Pi and the configured model provider.
+- In the server build, story turns and server-owned validated encounter history leave the machine through Pi and the configured model provider. The static liquid field makes no network request.
 - Provider processing and retention follow that provider's terms.
-- Application logs contain lifecycle and provider/model diagnostics, not conversation content or credentials.
+- Startup logs name the configured provider/model and may include Pi authentication diagnostics. The WebSocket server emits only content-free connection, stage, latency, validation, repair-count, and error-category metadata; it does not log story or response text, prompts, raw Pi events, credentials, or Pi RPC stderr.
 - Pi runs with sessions, tools, skills, extensions, and repository context disabled.
 
 ## Interaction
 
-- In a server build, write a freeform message and press Enter to send; use Shift+Enter for a new line.
-- In a static build, use Joy, Calm, Love, Wonder, Anger, or Melancholy to tune the field without chat or network access.
-- Emotional language in server mode blends the liquid palette and distinct structural behavior immediately: buoyancy, expansion, attraction, orbit, pressure, sharpness, drift, trails, and refraction.
-- Stop cancels an active Pi response. Retry resends the saved failed or cancelled message without duplicating it in the conversation.
-- Reconnect retries the same-origin Pi bridge; local field changes remain available while Pi is offline.
+- In a server build, submit one story and follow the bounded story → follow-up → tentative mirror → closure sequence.
+- Press Enter to send; use Shift+Enter for a new line. At the mirror, correct Alone freely or confirm what fits.
+- Stop cancels an active response without advancing the encounter. Retry resends the saved failed or cancelled turn without duplicating it.
+- Leave exits early, Reset starts a clean session, and a normally completed encounter exposes only Begin again.
+- In a static build, use Joy, Calm, Love, Wonder, Anger, or Melancholy to tune the local liquid field without chat or network access.
 - The liquid field remains ambient and does not track clicks or pointer movement.
-- Sending a server-mode message adds a restrained visual pulse.
 
-The scene respects `prefers-reduced-motion` with on-demand rendering, adapts visual quality from sustained frame measurements, and keeps all controls keyboard accessible.
+Both experiences respect `prefers-reduced-motion` and keep their controls keyboard accessible. The liquid field also adapts visual quality from sustained frame measurements.
 
 ## Troubleshooting
 

@@ -5,6 +5,7 @@ import { createPiRpcSession } from './pi-rpc.js'
 import {
   buildRepairPrompt,
   buildRoleplayPrompt,
+  MAX_ROLEPLAY_OUTPUT_LENGTH,
   parseRoleplayTurn,
 } from './roleplay-turn.js'
 
@@ -160,6 +161,8 @@ export function attachChatWebSocketServer(
     createConnectionId = () => randomUUID().slice(0, 8),
     rejectUnknownUpgrades = true,
     turnTimeoutMs = 30_000,
+    settleTimeoutMs = 2_000,
+    telemetryNow = Date.now,
     setTurnTimeout = setTimeout,
     clearTurnTimeout = clearTimeout,
   } = {},
@@ -202,13 +205,53 @@ export function attachChatWebSocketServer(
     let encounterBuffer = ''
     let turnTimer = null
     const address = clientAddress(request, trustProxy)
-    logger.info?.('Chat connection opened.', { connectionId })
+    logger.info?.('Chat connection opened.', {
+      event: 'connection_opened',
+      connectionId,
+    })
     const rateLimitKey =
       isLocalRequestHost(request.headers.host) && isLoopbackAddress(address) ? null : address
     function clearActiveTurnTimer() {
       if (turnTimer === null) return
       clearTurnTimeout(turnTimer)
       turnTimer = null
+    }
+
+    function logEncounterFinished({
+      completedStage = null,
+      validationOutcome,
+      errorCategory = null,
+    }) {
+      if (!activeEncounter || activeEncounter.telemetryFinished) return
+      activeEncounter.telemetryFinished = true
+      logger.info?.('Encounter turn finished.', {
+        event: 'encounter_turn_finished',
+        connectionId,
+        requestedStage: activeEncounter.expectedStage,
+        completedStage,
+        latencyMs: Math.max(0, telemetryNow() - activeEncounter.startedAt),
+        validationOutcome,
+        repairCount: activeEncounter.repairAttempt,
+        errorCategory,
+      })
+    }
+
+    function finishActiveEncounterForProviderFailure(statusMessage) {
+      if (!activeEncounter) return false
+      clearActiveTurnTimer()
+      logEncounterFinished({
+        validationOutcome: 'not-run',
+        errorCategory: 'provider',
+      })
+      activeEncounter = null
+      encounterBuffer = ''
+      busy = false
+      send(socket, {
+        type: 'bridge_status',
+        status: 'offline',
+        message: statusMessage,
+      })
+      return true
     }
 
     function startTurnTimer() {
@@ -219,20 +262,78 @@ export function attachChatWebSocketServer(
         activeEncounter.timedOut = true
         encounterBuffer = ''
         session.abort()
+        startSettlementTimer()
       }, turnTimeoutMs)
+    }
+
+    function startSettlementTimer() {
+      clearActiveTurnTimer()
+      turnTimer = setTurnTimeout(() => {
+        turnTimer = null
+        if (!activeEncounter) return
+        const awaitingSettlement = activeEncounter.cancelled
+          || activeEncounter.timedOut
+          || activeEncounter.outputTooLarge
+          || activeEncounter.providerError
+        if (!awaitingSettlement) return
+        logEncounterFinished({
+          validationOutcome: activeEncounter.outputTooLarge ? 'failed' : 'not-run',
+          errorCategory: 'settlement',
+        })
+        activeEncounter = null
+        encounterBuffer = ''
+        busy = false
+        send(socket, {
+          type: 'assistant_error',
+          errorKind: 'settlement',
+          message: 'Pi did not finish stopping. Reset to start a new encounter.',
+        })
+        send(socket, {
+          type: 'bridge_status',
+          status: 'offline',
+          message: 'Pi did not finish stopping.',
+        })
+        closeSession('settlement-timeout')
+        socket.close(1011, 'Pi did not settle')
+      }, settleTimeoutMs)
     }
 
     const session = createSession({
       onEvent(event) {
         if (activeEncounter) {
-          if (activeEncounter.cancelled || activeEncounter.timedOut) {
+          if (
+            activeEncounter.cancelled
+            || activeEncounter.timedOut
+            || activeEncounter.outputTooLarge
+            || activeEncounter.providerError
+          ) {
             if (event.type === 'agent_settled') {
+              const errorCategory = activeEncounter.timedOut
+                ? 'timeout'
+                : activeEncounter.outputTooLarge
+                  ? 'validation'
+                  : activeEncounter.providerError
+                    ? 'provider'
+                    : 'cancellation'
+              logEncounterFinished({
+                validationOutcome: activeEncounter.outputTooLarge ? 'failed' : 'not-run',
+                errorCategory,
+              })
+              clearActiveTurnTimer()
               if (activeEncounter.timedOut) {
                 send(socket, {
                   type: 'assistant_error',
                   errorKind: 'timeout',
                   message: 'Alone took too long to respond. Retry or close this encounter.',
                 })
+              } else if (activeEncounter.outputTooLarge) {
+                send(socket, {
+                  type: 'assistant_error',
+                  errorKind: 'validation',
+                  message: 'Alone returned an oversized response. Retry this turn.',
+                })
+              } else if (activeEncounter.providerError) {
+                send(socket, activeEncounter.providerError)
               } else {
                 send(socket, { type: 'encounter_cancelled', id: activeEncounter.id })
               }
@@ -242,11 +343,27 @@ export function attachChatWebSocketServer(
             }
             return
           }
+          const encounterFailure = eventToClientMessage(event)
+          if (encounterFailure?.type === 'assistant_error') {
+            activeEncounter.providerError = encounterFailure
+            encounterBuffer = ''
+            startSettlementTimer()
+            return
+          }
           if (
             event.type === 'message_update'
             && event.assistantMessageEvent?.type === 'text_delta'
           ) {
-            encounterBuffer += event.assistantMessageEvent.delta
+            const delta = String(event.assistantMessageEvent.delta ?? '')
+            if (encounterBuffer.length + delta.length > MAX_ROLEPLAY_OUTPUT_LENGTH) {
+              clearActiveTurnTimer()
+              activeEncounter.outputTooLarge = true
+              encounterBuffer = ''
+              session.abort()
+              startSettlementTimer()
+              return
+            }
+            encounterBuffer += delta
             return
           }
           if (event.type === 'agent_settled') {
@@ -266,6 +383,10 @@ export function attachChatWebSocketServer(
                 },
               )
               encounterStage = result.value.stage
+              logEncounterFinished({
+                completedStage: result.value.stage,
+                validationOutcome: activeEncounter.repairAttempt === 0 ? 'passed' : 'repaired',
+              })
               send(socket, {
                 type: 'encounter_turn',
                 id: activeEncounter.id,
@@ -282,6 +403,10 @@ export function attachChatWebSocketServer(
               return
             } else {
               clearActiveTurnTimer()
+              logEncounterFinished({
+                validationOutcome: 'failed',
+                errorCategory: 'validation',
+              })
               send(socket, {
                 type: 'assistant_error',
                 errorKind: 'validation',
@@ -300,22 +425,41 @@ export function attachChatWebSocketServer(
         send(socket, message)
       },
       onError() {
-        logger.error?.('Pi session error.', { connectionId })
+        const statusMessage = 'Pi stopped unexpectedly.'
+        logger.error?.('Pi session error.', {
+          event: 'pi_session_error',
+          connectionId,
+        })
         send(socket, {
           type: 'assistant_error',
           message: 'The Pi bridge is unavailable. Check the server configuration and try again.',
         })
+        if (!finishActiveEncounterForProviderFailure(statusMessage)) {
+          send(socket, {
+            type: 'bridge_status',
+            status: 'offline',
+            message: statusMessage,
+          })
+        }
         closeSession('session-error')
       },
       onExit({ code, signal }) {
         if (closed) return
+        const statusMessage = code === 0 ? 'Pi disconnected.' : 'Pi stopped unexpectedly.'
         busy = false
-        logger.error?.('Pi session exited.', { connectionId, code, signal })
-        send(socket, {
-          type: 'bridge_status',
-          status: 'offline',
-          message: code === 0 ? 'Pi disconnected.' : 'Pi stopped unexpectedly.',
+        logger.error?.('Pi session exited.', {
+          event: 'pi_session_exited',
+          connectionId,
+          code,
+          signal,
         })
+        if (!finishActiveEncounterForProviderFailure(statusMessage)) {
+          send(socket, {
+            type: 'bridge_status',
+            status: 'offline',
+            message: statusMessage,
+          })
+        }
       },
     })
 
@@ -329,16 +473,30 @@ export function attachChatWebSocketServer(
         send(socket, { type: 'assistant_error', message: 'The chat request was not valid JSON.' })
         return
       }
+      if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        send(socket, { type: 'assistant_error', message: 'The chat request must be a JSON object.' })
+        return
+      }
 
       if (message.type === 'abort') {
         if (activeEncounter) {
           activeEncounter.cancelled = true
-          clearActiveTurnTimer()
+          session.abort()
+          startSettlementTimer()
+          return
         }
         session.abort()
         return
       }
       if (message.type === 'encounter_prompt') {
+        if (encounterStage === 'closure') {
+          send(socket, {
+            type: 'assistant_error',
+            errorKind: 'request',
+            message: 'This encounter is already closed.',
+          })
+          return
+        }
         const request = message.request ?? {}
         const expectedStage = {
           story: 'follow-up',
@@ -379,8 +537,15 @@ export function attachChatWebSocketServer(
             message: userMessage,
             inputKind: expectedInputKind,
             repairAttempt: 0,
+            startedAt: telemetryNow(),
+            telemetryFinished: false,
           }
           encounterBuffer = ''
+          logger.info?.('Encounter stage requested.', {
+            event: 'encounter_stage_requested',
+            connectionId,
+            requestedStage: expectedStage,
+          })
           session.prompt(buildRoleplayPrompt({
             message: userMessage,
             currentStage: encounterStage,
@@ -392,6 +557,10 @@ export function attachChatWebSocketServer(
           startTurnTimer()
           send(socket, { type: 'prompt_accepted', id: activeEncounter.id })
         } catch (error) {
+          logEncounterFinished({
+            validationOutcome: 'not-run',
+            errorCategory: 'provider',
+          })
           clearActiveTurnTimer()
           activeEncounter = null
           encounterBuffer = ''
@@ -436,10 +605,23 @@ export function attachChatWebSocketServer(
 
     function closeSession(reason) {
       if (closed) return
-      closed = true
       clearActiveTurnTimer()
+      if (activeEncounter) {
+        logEncounterFinished({
+          validationOutcome: 'not-run',
+          errorCategory: 'disconnect',
+        })
+        activeEncounter = null
+        encounterBuffer = ''
+        busy = false
+      }
+      closed = true
       session.close()
-      logger.info?.('Chat connection closed.', { connectionId, reason })
+      logger.info?.('Chat connection closed.', {
+        event: 'connection_closed',
+        connectionId,
+        reason,
+      })
     }
 
     socket.on('close', () => closeSession('close'))

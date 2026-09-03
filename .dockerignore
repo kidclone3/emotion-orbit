@@ -14,5 +14,6 @@ shaders
 *.log
 *.pen
 *.png
+!public/assets/forest/hidden-forest-wide.png
 README.md
 LICENSE

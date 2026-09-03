@@ -1,6 +1,7 @@
 import './bubble-style.css'
 import { resolveBridgeConfig, bridgeSupportsChat } from './bridge-config.js'
 import { bubbleSlotFor } from './bubble-layout.js'
+import { deriveBubbleControls } from './bubble-controls.js'
 import { createPiChatClient } from './pi-chat.js'
 import { createStoryEncounter } from './story-encounter.js'
 
@@ -140,27 +141,30 @@ function stageCopy() {
 }
 
 function syncControls(note) {
-  const closed = encounter.getState().closed
-  const inFlight = turnStatus === 'requesting' || turnStatus === 'cancelling'
-  const canRetry = turnStatus === 'failed' || turnStatus === 'cancelled'
-  const unavailable = localOnly || sessionBroken || closed
+  const controls = deriveBubbleControls({
+    closed: encounter.getState().closed,
+    turnStatus,
+    localOnly,
+    sessionBroken,
+    bridgeState,
+  })
 
   experience.dataset.turnStatus = turnStatus
-  storyForm.setAttribute('aria-busy', String(inFlight))
-  storyInput.disabled = unavailable || inFlight || canRetry
-  sendButton.disabled = unavailable || inFlight || canRetry || bridgeState !== 'online'
-  stopButton.hidden = !inFlight
-  stopButton.disabled = turnStatus !== 'requesting'
-  retryButton.hidden = !canRetry
-  retryButton.disabled = bridgeState !== 'online'
-  leaveButton.disabled = closed
+  storyForm.hidden = controls.composerHidden
+  storyForm.setAttribute('aria-busy', String(!controls.stopHidden))
+  resetButton.textContent = controls.resetLabel
+  storyInput.disabled = controls.inputDisabled
+  sendButton.disabled = controls.sendDisabled
+  stopButton.hidden = controls.stopHidden
+  stopButton.disabled = controls.stopDisabled
+  retryButton.hidden = controls.retryHidden
+  retryButton.disabled = controls.retryDisabled
+  leaveButton.disabled = controls.leaveDisabled
 
   const copy = stageCopy()
   inputLabel.textContent = copy.label
   storyInput.placeholder = copy.placeholder
-  if (closed) sendButton.textContent = 'Complete'
-  else if (inFlight) sendButton.textContent = 'Listening…'
-  else sendButton.textContent = 'Send'
+  sendButton.textContent = controls.sendLabel
   if (note) interactionNote.textContent = note
 }
 
