@@ -5,6 +5,7 @@ import {
 } from '../shared/roleplay-contract.js'
 
 const validateTurn = createRoleplayTurnValidator()
+export const MAX_ROLEPLAY_OUTPUT_LENGTH = 4096
 
 const STAGE_RULES = Object.freeze({
   'follow-up': 'Reflect one concrete detail from the story, then ask exactly one contextual open question. tentativeMeaning must be null.',
@@ -46,7 +47,7 @@ ${JSON.stringify({
 }
 
 export function parseRoleplayTurn(raw, expectedStage) {
-  if (String(raw).length > 4096) {
+  if (String(raw).length > MAX_ROLEPLAY_OUTPUT_LENGTH) {
     return {
       ok: false,
       errors: [{ path: '/', message: 'must be 4,096 characters or fewer' }],

@@ -5,6 +5,7 @@ import { createPiRpcSession } from './pi-rpc.js'
 import {
   buildRepairPrompt,
   buildRoleplayPrompt,
+  MAX_ROLEPLAY_OUTPUT_LENGTH,
   parseRoleplayTurn,
 } from './roleplay-turn.js'
 
@@ -160,6 +161,7 @@ export function attachChatWebSocketServer(
     createConnectionId = () => randomUUID().slice(0, 8),
     rejectUnknownUpgrades = true,
     turnTimeoutMs = 30_000,
+    settleTimeoutMs = 2_000,
     setTurnTimeout = setTimeout,
     clearTurnTimeout = clearTimeout,
   } = {},
@@ -219,20 +221,65 @@ export function attachChatWebSocketServer(
         activeEncounter.timedOut = true
         encounterBuffer = ''
         session.abort()
+        startSettlementTimer()
       }, turnTimeoutMs)
+    }
+
+    function startSettlementTimer() {
+      if (!activeEncounter || activeEncounter.settlementTimerArmed) return
+      activeEncounter.settlementTimerArmed = true
+      clearActiveTurnTimer()
+      turnTimer = setTurnTimeout(() => {
+        turnTimer = null
+        if (!activeEncounter) return
+        const awaitingSettlement = activeEncounter.cancelled
+          || activeEncounter.timedOut
+          || activeEncounter.outputTooLarge
+          || activeEncounter.providerError
+        if (!awaitingSettlement) return
+        activeEncounter = null
+        encounterBuffer = ''
+        busy = false
+        send(socket, {
+          type: 'assistant_error',
+          errorKind: 'settlement',
+          message: 'Pi did not finish stopping. Reset to start a new encounter.',
+        })
+        send(socket, {
+          type: 'bridge_status',
+          status: 'offline',
+          message: 'Pi did not finish stopping.',
+        })
+        closeSession('settlement-timeout')
+        socket.close(1011, 'Pi did not settle')
+      }, settleTimeoutMs)
     }
 
     const session = createSession({
       onEvent(event) {
         if (activeEncounter) {
-          if (activeEncounter.cancelled || activeEncounter.timedOut) {
+          if (
+            activeEncounter.cancelled
+            || activeEncounter.timedOut
+            || activeEncounter.outputTooLarge
+            || activeEncounter.providerError
+          ) {
             if (event.type === 'agent_settled') {
+              clearActiveTurnTimer()
               if (activeEncounter.timedOut) {
                 send(socket, {
                   type: 'assistant_error',
                   errorKind: 'timeout',
                   message: 'Alone took too long to respond. Retry or close this encounter.',
                 })
+              } else if (activeEncounter.outputTooLarge) {
+                send(socket, {
+                  type: 'assistant_error',
+                  errorKind: 'validation',
+                  message: 'Alone returned an oversized response. Retry this turn.',
+                })
+              } else if (activeEncounter.providerError) {
+                send(socket, activeEncounter.providerError)
               } else {
                 send(socket, { type: 'encounter_cancelled', id: activeEncounter.id })
               }
@@ -242,11 +289,27 @@ export function attachChatWebSocketServer(
             }
             return
           }
+          const encounterFailure = eventToClientMessage(event)
+          if (encounterFailure?.type === 'assistant_error') {
+            activeEncounter.providerError = encounterFailure
+            encounterBuffer = ''
+            startSettlementTimer()
+            return
+          }
           if (
             event.type === 'message_update'
             && event.assistantMessageEvent?.type === 'text_delta'
           ) {
-            encounterBuffer += event.assistantMessageEvent.delta
+            const delta = String(event.assistantMessageEvent.delta ?? '')
+            if (encounterBuffer.length + delta.length > MAX_ROLEPLAY_OUTPUT_LENGTH) {
+              clearActiveTurnTimer()
+              activeEncounter.outputTooLarge = true
+              encounterBuffer = ''
+              session.abort()
+              startSettlementTimer()
+              return
+            }
+            encounterBuffer += delta
             return
           }
           if (event.type === 'agent_settled') {
@@ -329,16 +392,31 @@ export function attachChatWebSocketServer(
         send(socket, { type: 'assistant_error', message: 'The chat request was not valid JSON.' })
         return
       }
+      if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        send(socket, { type: 'assistant_error', message: 'The chat request must be a JSON object.' })
+        return
+      }
 
       if (message.type === 'abort') {
         if (activeEncounter) {
+          if (activeEncounter.settlementTimerArmed) return
           activeEncounter.cancelled = true
-          clearActiveTurnTimer()
+          session.abort()
+          startSettlementTimer()
+          return
         }
         session.abort()
         return
       }
       if (message.type === 'encounter_prompt') {
+        if (encounterStage === 'closure') {
+          send(socket, {
+            type: 'assistant_error',
+            errorKind: 'request',
+            message: 'This encounter is already closed.',
+          })
+          return
+        }
         const request = message.request ?? {}
         const expectedStage = {
           story: 'follow-up',

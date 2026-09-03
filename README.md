@@ -1,6 +1,6 @@
 # Emotion Orbit
 
-Emotion Orbit is a bounded AI-character story encounter. An isolated Pi agent responds through character and user speech bubbles positioned over an ambient forest scene.
+Emotion Orbit explores emotional stories through two bounded experiences: an interactive local liquid field for static hosting and a Pi-backed AI-character encounter for self-hosting. In the role-play, an isolated Pi agent responds through character and user speech bubbles positioned over an ambient forest scene.
 
 The visual reading is deterministic and interpretive. It does not detect, diagnose, or treat a person's emotion or replace crisis or medical support.
 
@@ -8,7 +8,7 @@ The visual reading is deterministic and interpretive. It does not detect, diagno
 
 The frontend has two explicit build modes:
 
-- `pnpm run build:static` creates `dist/` for GitHub Pages or another static host. It presents the encounter scene as a non-networked preview and never opens a WebSocket.
+- `pnpm run build:static` creates `dist/` for GitHub Pages or another static host. It preserves the interactive local liquid-field experience and never opens a WebSocket.
 - `pnpm run build:server` creates `dist/` with the Pi-backed encounter enabled. Serve it with `pnpm preview` or use Docker Compose so the same origin can provide `/chat`.
 
 `pnpm build` is the safe static alias. The Docker image and `pnpm dev` select server mode explicitly.
