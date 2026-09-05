@@ -1,3 +1,4 @@
+import { loadOptionalJelly } from './jelly-optional.js'
 import './bubble-style.css'
 import { resolveBridgeConfig, bridgeSupportsChat } from './bridge-config.js'
 import { bubbleSlotFor } from './bubble-layout.js'
@@ -102,6 +103,13 @@ let lastRequest = null
 let sequence = 0
 let sessionBroken = false
 
+const visualQuery = new URLSearchParams(location.search)
+const jelly = visualQuery.get('aloneVisual') === 'jelly'
+  ? loadOptionalJelly({ load: () => import('./jelly-character.js'), parent: experience,
+      options: { debug: visualQuery.get('debugJelly') === '1' },
+    })
+  : null
+
 function nextRequestId() {
   sequence += 1
   return `encounter-${Date.now()}-${sequence}`
@@ -141,6 +149,7 @@ function stageCopy() {
 }
 
 function syncControls(note) {
+  jelly?.sync({ stage: encounter.getState().stage, closed: encounter.getState().closed, turnStatus })
   const controls = deriveBubbleControls({
     closed: encounter.getState().closed,
     turnStatus,
@@ -244,6 +253,7 @@ function handlePiMessage(message) {
       author: 'Alone',
       stage: message.turn.stage,
     })
+    jelly?.respond({ stage: encounter.getState().stage, closed: encounter.getState().closed, turnStatus: 'idle' })
     currentRequest = null
     lastRequest = null
     if (encounter.getState().closed) {
@@ -351,6 +361,7 @@ leaveButton.addEventListener('click', () => {
 
 resetButton.addEventListener('click', () => location.reload())
 addEventListener('beforeunload', () => piChat?.close(), { once: true })
+addEventListener('pagehide', (event) => { if (!event.persisted) jelly?.dispose() })
 
 appendBubble('character', OPENING_COPY, { author: 'Alone · fictional AI character', stage: 'opening' })
 if (localOnly) updateBridgeStatus('local-only')
@@ -360,6 +371,7 @@ window.__emotionOrbit = {
   getState: () => ({
     bridge: bridgeState,
     turnStatus,
+    jelly: jelly?.getState() ?? { enabled: false, renderer: null, backend: null, visualState: null, reducedMotion: null, fallback: false, frames: 0 },
     encounter: encounter.getState(),
     bubbleCount: bubbleStage.querySelectorAll('.speech-bubble').length,
     bubbles: [...bubbleStage.querySelectorAll('.speech-bubble')].map((bubble) => ({
