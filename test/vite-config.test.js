@@ -7,15 +7,13 @@ function configFor(mode) {
 }
 
 test('static builds disable chat', () => {
-  assert.equal(
-    configFor('static').define['import.meta.env.VITE_CHAT_ENABLED'],
-    JSON.stringify('false'),
-  )
+  const config = configFor('static')
+  assert.equal(config.define['import.meta.env.VITE_CHAT_ENABLED'], JSON.stringify('false'))
+  assert.equal(config.define['import.meta.env.VITE_EXPERIENCE_MODE'], JSON.stringify('liquid-field'))
 })
 
 test('server builds enable chat', () => {
-  assert.equal(
-    configFor('server').define['import.meta.env.VITE_CHAT_ENABLED'],
-    JSON.stringify('true'),
-  )
+  const config = configFor('server')
+  assert.equal(config.define['import.meta.env.VITE_CHAT_ENABLED'], JSON.stringify('true'))
+  assert.equal(config.define['import.meta.env.VITE_EXPERIENCE_MODE'], JSON.stringify('roleplay'))
 })

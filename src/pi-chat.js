@@ -78,6 +78,12 @@ export function createPiChatClient({
       }
       socket.send(JSON.stringify({ type: 'prompt', id, message, visual }))
     },
+    sendEncounter(request) {
+      if (socket.readyState !== (WebSocketImpl.OPEN ?? 1)) {
+        throw new Error('Pi is not connected yet.')
+      }
+      socket.send(JSON.stringify({ type: 'encounter_prompt', request }))
+    },
     abort() {
       if (socket.readyState === (WebSocketImpl.OPEN ?? 1)) {
         socket.send(JSON.stringify({ type: 'abort' }))
