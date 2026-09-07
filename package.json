@@ -3,9 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "node server.mjs --dev",
-    "build": "npm run build:static",
+    "build": "pnpm run build:static",
     "build:static": "vite build --mode static",
     "build:server": "vite build --mode server",
     "preview": "node server.mjs",
@@ -15,6 +16,7 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
     "gsap": "^3.15.0",
     "three": "^0.185.1",
     "ws": "^8.21.3"

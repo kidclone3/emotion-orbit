@@ -69,6 +69,7 @@ test('tells Pi that the current color is already visible in the webpage', () => 
 async function createChatHarness({
   now = Date.now,
   trustProxy = false,
+  telemetryNow = Date.now,
   logger = { info() {}, error() {} },
   createConnectionId = () => 'test-connection',
   settleImmediately = true,
@@ -79,6 +80,10 @@ async function createChatHarness({
   const clients = []
   const prompts = []
   let emitEvent = () => {}
+  let emitSessionError = () => {}
+  let emitSessionExit = () => {}
+  let turnTimeoutCallback = null
+  let aborts = 0
   let chatClosed = false
   let closedSessions = 0
   let resolveSessionClosed
@@ -88,17 +93,29 @@ async function createChatHarness({
   const chatServer = attachChatWebSocketServer(server, {
     trustProxy,
     rateLimitNow: now,
+    telemetryNow,
     logger,
     createConnectionId,
     rejectUnknownUpgrades,
-    createSession({ onEvent }) {
+    setTurnTimeout(callback) {
+      turnTimeoutCallback = callback
+      return 1
+    },
+    clearTurnTimeout() {
+      turnTimeoutCallback = null
+    },
+    createSession({ onEvent, onError, onExit }) {
       emitEvent = onEvent
+      emitSessionError = onError
+      emitSessionExit = onExit
       return {
         prompt(message) {
           prompts.push(message)
           if (settleImmediately) queueMicrotask(() => onEvent({ type: 'agent_settled' }))
         },
-        abort() {},
+        abort() {
+          aborts += 1
+        },
         close() {
           closedSessions += 1
           resolveSessionClosed()
@@ -162,7 +179,18 @@ async function createChatHarness({
       return response
     },
     emit: (event) => emitEvent(event),
+    emitSessionError: () => emitSessionError(),
+    emitSessionExit: (result) => emitSessionExit(result),
     promptCount: () => prompts.length,
+    prompts: () => [...prompts],
+    abortCount: () => aborts,
+    fireTurnTimeout() {
+      if (!turnTimeoutCallback) return false
+      const callback = turnTimeoutCallback
+      turnTimeoutCallback = null
+      callback()
+      return true
+    },
     closedSessionCount: () => closedSessions,
     waitForSessionClose: () => sessionClosed,
     async closeChatServer() {
@@ -202,6 +230,956 @@ function sendPrompt(socket, id, message = `message ${id}`, visual) {
     socket.send(JSON.stringify({ type: 'prompt', id, message, visual }))
   })
 }
+
+function waitForMessageType(socket, type, timeoutMs = 100) {
+  return Promise.race([
+    new Promise((resolve) => {
+      function handleMessage(payload) {
+        const response = JSON.parse(payload.toString())
+        if (response.type !== type) return
+        socket.off('message', handleMessage)
+        resolve(response)
+      }
+      socket.on('message', handleMessage)
+    }),
+    new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ])
+}
+
+function waitForBridgeStatus(socket, status, timeoutMs = 100) {
+  return Promise.race([
+    new Promise((resolve) => {
+      function handleMessage(payload) {
+        const response = JSON.parse(payload.toString())
+        if (response.type !== 'bridge_status' || response.status !== status) return
+        socket.off('message', handleMessage)
+        resolve(response)
+      }
+      socket.on('message', handleMessage)
+    }),
+    new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ])
+}
+
+test('logs connection lifecycle and content-free metadata for valid and repaired turns', async () => {
+  const records = []
+  let timestamp = 1_000
+  const harness = await createChatHarness({
+    settleImmediately: false,
+    telemetryNow: () => {
+      const value = timestamp
+      timestamp += 25
+      return value
+    },
+    logger: {
+      info: (message, metadata) => records.push({ level: 'info', message, metadata }),
+      error: (message, metadata) => records.push({ level: 'error', message, metadata }),
+    },
+  })
+  try {
+    const socket = await harness.connect('localhost')
+    const firstAccepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'observability-valid',
+        message: 'PRIVATE-STORY-MARKER',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+      },
+    }))
+    await firstAccepted
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'text_delta',
+        delta: JSON.stringify({
+          schemaVersion: 1,
+          stage: 'follow-up',
+          speaker: 'alone',
+          speechAct: 'reflect_and_ask',
+          text: 'PRIVATE-RESPONSE-MARKER What stayed with you?',
+          storyReference: 'PRIVATE-STORY-MARKER',
+          tentativeMeaning: null,
+          safetyMode: 'normal',
+        }),
+      },
+    })
+    harness.emit({ type: 'agent_settled' })
+
+    const secondAccepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'observability-repaired',
+        message: 'PRIVATE-ANSWER-MARKER',
+        currentStage: 'follow-up',
+        expectedStage: 'mirror',
+        inputKind: 'follow_up_answer',
+      },
+    }))
+    await secondAccepted
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'PRIVATE-INVALID-RAW-EVENT' },
+    })
+    harness.emit({ type: 'agent_settled' })
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'text_delta',
+        delta: JSON.stringify({
+          schemaVersion: 1,
+          stage: 'mirror',
+          speaker: 'alone',
+          speechAct: 'tentative_mirror',
+          text: 'PRIVATE-REPAIRED-MARKER Is that close?',
+          storyReference: 'PRIVATE-ANSWER-MARKER',
+          tentativeMeaning: 'a tentative meaning',
+          safetyMode: 'normal',
+        }),
+      },
+    })
+    harness.emit({ type: 'agent_settled' })
+    socket.close()
+    await once(socket, 'close')
+    await harness.waitForSessionClose()
+
+    assert.deepEqual(records.map(({ metadata }) => metadata), [
+      {
+        event: 'connection_opened',
+        connectionId: 'test-connection',
+      },
+      {
+        event: 'encounter_stage_requested',
+        connectionId: 'test-connection',
+        requestedStage: 'follow-up',
+      },
+      {
+        event: 'encounter_turn_finished',
+        connectionId: 'test-connection',
+        requestedStage: 'follow-up',
+        completedStage: 'follow-up',
+        latencyMs: 25,
+        validationOutcome: 'passed',
+        repairCount: 0,
+        errorCategory: null,
+      },
+      {
+        event: 'encounter_stage_requested',
+        connectionId: 'test-connection',
+        requestedStage: 'mirror',
+      },
+      {
+        event: 'encounter_turn_finished',
+        connectionId: 'test-connection',
+        requestedStage: 'mirror',
+        completedStage: 'mirror',
+        latencyMs: 25,
+        validationOutcome: 'repaired',
+        repairCount: 1,
+        errorCategory: null,
+      },
+      {
+        event: 'connection_closed',
+        connectionId: 'test-connection',
+        reason: 'close',
+      },
+    ])
+    assert.doesNotMatch(
+      JSON.stringify(records),
+      /PRIVATE-(?:STORY|RESPONSE|ANSWER|INVALID|REPAIRED)|message_update|agent_settled/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('logs content-free terminal metadata for every encounter failure category', async (context) => {
+  async function waitForAbort(harness) {
+    for (let attempt = 0; attempt < 20 && harness.abortCount() === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+    assert.equal(harness.abortCount(), 1)
+  }
+
+  const cases = [
+    {
+      name: 'terminal validation failure',
+      errorCategory: 'validation',
+      validationOutcome: 'failed',
+      repairCount: 1,
+      async drive(harness) {
+        harness.emit({
+          type: 'message_update',
+          assistantMessageEvent: { type: 'text_delta', delta: 'PRIVATE-INVALID-FIRST' },
+        })
+        harness.emit({ type: 'agent_settled' })
+        harness.emit({
+          type: 'message_update',
+          assistantMessageEvent: { type: 'text_delta', delta: 'PRIVATE-INVALID-SECOND' },
+        })
+        harness.emit({ type: 'agent_settled' })
+      },
+    },
+    {
+      name: 'timeout',
+      errorCategory: 'timeout',
+      validationOutcome: 'not-run',
+      repairCount: 0,
+      async drive(harness) {
+        assert.equal(harness.fireTurnTimeout(), true)
+        harness.emit({ type: 'agent_settled' })
+      },
+    },
+    {
+      name: 'cancellation',
+      errorCategory: 'cancellation',
+      validationOutcome: 'not-run',
+      repairCount: 0,
+      async drive(harness, socket) {
+        socket.send(JSON.stringify({ type: 'abort' }))
+        await waitForAbort(harness)
+        harness.emit({ type: 'agent_settled' })
+      },
+    },
+    {
+      name: 'provider failure',
+      errorCategory: 'provider',
+      validationOutcome: 'not-run',
+      repairCount: 0,
+      async drive(harness) {
+        harness.emit({
+          type: 'agent_end',
+          willRetry: false,
+          messages: [{
+            role: 'assistant',
+            stopReason: 'error',
+            errorMessage: 'PRIVATE-PROVIDER-CREDENTIAL',
+          }],
+        })
+        harness.emit({ type: 'agent_settled' })
+      },
+    },
+    {
+      name: 'settlement failure',
+      errorCategory: 'settlement',
+      validationOutcome: 'not-run',
+      repairCount: 0,
+      async drive(harness, socket) {
+        socket.send(JSON.stringify({ type: 'abort' }))
+        await waitForAbort(harness)
+        assert.equal(harness.fireTurnTimeout(), true)
+      },
+    },
+  ]
+
+  for (const scenario of cases) {
+    await context.test(scenario.name, async () => {
+      const records = []
+      let timestamp = 2_000
+      const harness = await createChatHarness({
+        settleImmediately: false,
+        telemetryNow: () => {
+          const value = timestamp
+          timestamp += 30
+          return value
+        },
+        logger: {
+          info: (message, metadata) => records.push({ level: 'info', message, metadata }),
+          error: (message, metadata) => records.push({ level: 'error', message, metadata }),
+        },
+      })
+      try {
+        const socket = await harness.connect('localhost')
+        const accepted = waitForMessageType(socket, 'prompt_accepted')
+        socket.send(JSON.stringify({
+          type: 'encounter_prompt',
+          request: {
+            id: `observability-${scenario.errorCategory}`,
+            message: 'PRIVATE-FAILURE-STORY',
+            currentStage: 'story',
+            expectedStage: 'follow-up',
+            inputKind: 'story',
+          },
+        }))
+        await accepted
+        await scenario.drive(harness, socket)
+
+        const terminal = records
+          .map(({ metadata }) => metadata)
+          .find(({ event }) => event === 'encounter_turn_finished')
+        assert.deepEqual(terminal, {
+          event: 'encounter_turn_finished',
+          connectionId: 'test-connection',
+          requestedStage: 'follow-up',
+          completedStage: null,
+          latencyMs: 30,
+          validationOutcome: scenario.validationOutcome,
+          repairCount: scenario.repairCount,
+          errorCategory: scenario.errorCategory,
+        })
+        assert.doesNotMatch(
+          JSON.stringify(records),
+          /PRIVATE-(?:FAILURE|INVALID|PROVIDER)|message_update|agent_(?:end|settled)/,
+        )
+      } finally {
+        await harness.close()
+      }
+    })
+  }
+})
+
+test('terminalizes an active encounter when the Pi session errors', async () => {
+  const records = []
+  let timestamp = 3_000
+  const harness = await createChatHarness({
+    settleImmediately: false,
+    telemetryNow: () => {
+      const value = timestamp
+      timestamp += 40
+      return value
+    },
+    logger: {
+      info: (message, metadata) => records.push({ level: 'info', message, metadata }),
+      error: (message, metadata) => records.push({ level: 'error', message, metadata }),
+    },
+  })
+  try {
+    const socket = await harness.connect('localhost')
+    const accepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'session-error-active',
+        message: 'PRIVATE-SESSION-ERROR-STORY',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+      },
+    }))
+    await accepted
+
+    const errorMessage = waitForMessageType(socket, 'assistant_error')
+    const offlineStatus = waitForMessageType(socket, 'bridge_status')
+    harness.emitSessionError()
+    assert.deepEqual(await errorMessage, {
+      type: 'assistant_error',
+      message: 'The Pi bridge is unavailable. Check the server configuration and try again.',
+    })
+    assert.deepEqual(await offlineStatus, {
+      type: 'bridge_status',
+      status: 'offline',
+      message: 'Pi stopped unexpectedly.',
+    })
+
+    harness.emitSessionExit({ code: 1, signal: null })
+    const laterError = waitForMessageType(socket, 'assistant_error', 30)
+    assert.equal(harness.fireTurnTimeout(), false)
+    harness.emit({ type: 'agent_settled' })
+    assert.equal(await laterError, null)
+
+    const terminalRecords = records
+      .map(({ metadata }) => metadata)
+      .filter(({ event }) => event === 'encounter_turn_finished')
+    assert.deepEqual(terminalRecords, [{
+      event: 'encounter_turn_finished',
+      connectionId: 'test-connection',
+      requestedStage: 'follow-up',
+      completedStage: null,
+      latencyMs: 40,
+      validationOutcome: 'not-run',
+      repairCount: 0,
+      errorCategory: 'provider',
+    }])
+    assert.doesNotMatch(JSON.stringify(records), /PRIVATE-SESSION-ERROR-STORY/)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('marks the bridge offline when the Pi session errors without an active encounter', async () => {
+  const records = []
+  const messages = []
+  const harness = await createChatHarness({
+    settleImmediately: false,
+    logger: {
+      info: (message, metadata) => records.push({ level: 'info', message, metadata }),
+      error: (message, metadata) => records.push({ level: 'error', message, metadata }),
+    },
+  })
+  try {
+    const socket = await harness.connect('localhost')
+    socket.on('message', (payload) => messages.push(JSON.parse(payload.toString())))
+    const offlineStatus = waitForBridgeStatus(socket, 'offline')
+    harness.emitSessionError()
+    assert.deepEqual(await offlineStatus, {
+      type: 'bridge_status',
+      status: 'offline',
+      message: 'Pi stopped unexpectedly.',
+    })
+
+    harness.emitSessionExit({ code: 1, signal: null })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(
+      messages.filter((message) => message.type === 'bridge_status' && message.status === 'offline').length,
+      1,
+    )
+    assert.equal(
+      records.filter(({ metadata }) => metadata.event === 'encounter_turn_finished').length,
+      0,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('terminalizes an active encounter when the Pi session exits unexpectedly', async () => {
+  const records = []
+  let timestamp = 4_000
+  const harness = await createChatHarness({
+    settleImmediately: false,
+    telemetryNow: () => {
+      const value = timestamp
+      timestamp += 55
+      return value
+    },
+    logger: {
+      info: (message, metadata) => records.push({ level: 'info', message, metadata }),
+      error: (message, metadata) => records.push({ level: 'error', message, metadata }),
+    },
+  })
+  try {
+    const socket = await harness.connect('localhost')
+    const accepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'session-exit-active',
+        message: 'PRIVATE-SESSION-EXIT-STORY',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+      },
+    }))
+    await accepted
+
+    const offlineStatus = waitForMessageType(socket, 'bridge_status')
+    harness.emitSessionExit({ code: 1, signal: null })
+    assert.deepEqual(await offlineStatus, {
+      type: 'bridge_status',
+      status: 'offline',
+      message: 'Pi stopped unexpectedly.',
+    })
+
+    const laterError = waitForMessageType(socket, 'assistant_error', 30)
+    assert.equal(harness.fireTurnTimeout(), false)
+    harness.emit({ type: 'agent_settled' })
+    assert.equal(await laterError, null)
+
+    harness.emitSessionExit({ code: 1, signal: null })
+    const terminalRecords = records
+      .map(({ metadata }) => metadata)
+      .filter(({ event }) => event === 'encounter_turn_finished')
+    assert.deepEqual(terminalRecords, [{
+      event: 'encounter_turn_finished',
+      connectionId: 'test-connection',
+      requestedStage: 'follow-up',
+      completedStage: null,
+      latencyMs: 55,
+      validationOutcome: 'not-run',
+      repairCount: 0,
+      errorCategory: 'provider',
+    }])
+    assert.doesNotMatch(JSON.stringify(records), /PRIVATE-SESSION-EXIT-STORY/)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('terminalizes an active encounter when its WebSocket disconnects', async () => {
+  const records = []
+  let timestamp = 5_000
+  const harness = await createChatHarness({
+    settleImmediately: false,
+    telemetryNow: () => {
+      const value = timestamp
+      timestamp += 70
+      return value
+    },
+    logger: {
+      info: (message, metadata) => records.push({ level: 'info', message, metadata }),
+      error: (message, metadata) => records.push({ level: 'error', message, metadata }),
+    },
+  })
+  try {
+    const socket = await harness.connect('localhost')
+    const accepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'socket-close-active',
+        message: 'PRIVATE-SOCKET-CLOSE-STORY',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+      },
+    }))
+    await accepted
+
+    socket.close()
+    await once(socket, 'close')
+    await harness.waitForSessionClose()
+    assert.equal(harness.fireTurnTimeout(), false)
+    harness.emit({ type: 'agent_settled' })
+
+    const terminalRecords = records
+      .map(({ metadata }) => metadata)
+      .filter(({ event }) => event === 'encounter_turn_finished')
+    assert.deepEqual(terminalRecords, [{
+      event: 'encounter_turn_finished',
+      connectionId: 'test-connection',
+      requestedStage: 'follow-up',
+      completedStage: null,
+      latencyMs: 70,
+      validationOutcome: 'not-run',
+      repairCount: 0,
+      errorCategory: 'disconnect',
+    }])
+    assert.equal(
+      terminalRecords.filter(({ errorCategory }) => (
+        errorCategory === 'timeout' || errorCategory === 'settlement'
+      )).length,
+      0,
+    )
+    assert.doesNotMatch(JSON.stringify(records), /PRIVATE-SOCKET-CLOSE-STORY/)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('rejects non-object JSON without terminating the connection', async () => {
+  const harness = await createChatHarness()
+  try {
+    const socket = await harness.connect('localhost')
+    const errorPromise = waitForMessageType(socket, 'assistant_error')
+    socket.send('null')
+
+    assert.deepEqual(await errorPromise, {
+      type: 'assistant_error',
+      message: 'The chat request must be a JSON object.',
+    })
+    assert.equal((await sendPrompt(socket, 'after-null')).type, 'assistant_done')
+  } finally {
+    await harness.close()
+  }
+})
+
+test('validates a complete encounter turn before sending it to the browser', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const turnPromise = waitForMessageType(socket, 'encounter_turn')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'encounter-1',
+        message: 'Everyone left before I could say goodbye.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    assert.deepEqual(await acceptedPromise, { type: 'prompt_accepted', id: 'encounter-1' })
+    assert.match(harness.prompts()[0], /expected response stage is "follow-up"/i)
+    const turn = {
+      schemaVersion: 1,
+      stage: 'follow-up',
+      speaker: 'alone',
+      speechAct: 'reflect_and_ask',
+      text: 'You were left without a goodbye. What did you wish they had heard?',
+      storyReference: 'left without a goodbye',
+      tentativeMeaning: null,
+      safetyMode: 'normal',
+    }
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify(turn) },
+    })
+    harness.emit({ type: 'agent_settled' })
+
+    assert.deepEqual(await turnPromise, {
+      type: 'encounter_turn',
+      id: 'encounter-1',
+      turn,
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('builds later encounter prompts from server-owned validated history', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const firstTurnPromise = waitForMessageType(socket, 'encounter_turn')
+    const firstAcceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'history-1',
+        message: 'Everyone left before I could say goodbye.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [{ role: 'user', text: 'UNTRUSTED-BROWSER-HISTORY' }],
+      },
+    }))
+    await firstAcceptedPromise
+    const followUp = {
+      schemaVersion: 1,
+      stage: 'follow-up',
+      speaker: 'alone',
+      speechAct: 'reflect_and_ask',
+      text: 'You were left without a goodbye. What did you wish they had heard?',
+      storyReference: 'left without a goodbye',
+      tentativeMeaning: null,
+      safetyMode: 'normal',
+    }
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify(followUp) },
+    })
+    harness.emit({ type: 'agent_settled' })
+    await firstTurnPromise
+
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'history-2',
+        message: 'I wanted them to know the work mattered to me.',
+        currentStage: 'follow-up',
+        expectedStage: 'mirror',
+        inputKind: 'follow_up_answer',
+        history: [{ role: 'user', text: 'UNTRUSTED-BROWSER-HISTORY' }],
+      },
+    }))
+    await acceptedPromise
+
+    assert.match(harness.prompts()[1], /Everyone left before I could say goodbye\./)
+    assert.match(harness.prompts()[1], /You were left without a goodbye\./)
+    assert.match(harness.prompts()[1], /I wanted them to know the work mattered to me\./)
+    assert.doesNotMatch(harness.prompts()[1], /UNTRUSTED-BROWSER-HISTORY/)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('repairs one invalid model response before exposing a turn', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    const turnPromise = waitForMessageType(socket, 'encounter_turn')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'repair-1',
+        message: 'I felt overlooked.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    await acceptedPromise
+
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'not json' },
+    })
+    harness.emit({ type: 'agent_settled' })
+
+    assert.equal(harness.promptCount(), 2)
+    assert.match(harness.prompts()[1], /repair your previous response/i)
+
+    const repaired = {
+      schemaVersion: 1,
+      stage: 'follow-up',
+      speaker: 'alone',
+      speechAct: 'reflect_and_ask',
+      text: 'You felt overlooked. What did you need them to notice?',
+      storyReference: 'felt overlooked',
+      tentativeMeaning: null,
+      safetyMode: 'normal',
+    }
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify(repaired) },
+    })
+    harness.emit({ type: 'agent_settled' })
+
+    assert.deepEqual(await turnPromise, {
+      type: 'encounter_turn',
+      id: 'repair-1',
+      turn: repaired,
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('aborts oversized streamed encounter output before settlement', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'oversized-1',
+        message: 'I felt overlooked.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+      },
+    }))
+    await acceptedPromise
+
+    harness.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'x'.repeat(4097) },
+    })
+    assert.equal(harness.abortCount(), 1)
+    assert.equal(harness.promptCount(), 1)
+
+    const errorPromise = waitForMessageType(socket, 'assistant_error')
+    harness.emit({ type: 'agent_settled' })
+    assert.deepEqual(await errorPromise, {
+      type: 'assistant_error',
+      errorKind: 'validation',
+      message: 'Alone returned an oversized response. Retry this turn.',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('settles provider errors without repair or stage advancement', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    const request = {
+      id: 'provider-error-1',
+      message: 'I felt overlooked.',
+      currentStage: 'story',
+      expectedStage: 'follow-up',
+      inputKind: 'story',
+    }
+    socket.send(JSON.stringify({ type: 'encounter_prompt', request }))
+    await acceptedPromise
+
+    const earlyErrorPromise = waitForMessageType(socket, 'assistant_error', 20)
+    harness.emit({
+      type: 'agent_end',
+      willRetry: false,
+      messages: [{
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: '429: insufficient balance',
+      }],
+    })
+    assert.equal(await earlyErrorPromise, null)
+
+    const errorPromise = waitForMessageType(socket, 'assistant_error')
+    harness.emit({ type: 'agent_settled' })
+    assert.deepEqual(await errorPromise, {
+      type: 'assistant_error',
+      message: 'The configured Pi provider rejected this request (429). Check its balance or model setting.',
+    })
+    assert.equal(harness.promptCount(), 1)
+
+    const retryAccepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: { ...request, id: 'provider-error-retry' },
+    }))
+    assert.deepEqual(await retryAccepted, {
+      type: 'prompt_accepted',
+      id: 'provider-error-retry',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('rejects encounter prompts after the closure stage', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const steps = [
+      {
+        request: { id: 'close-1', message: 'A story.', currentStage: 'story', expectedStage: 'follow-up', inputKind: 'story' },
+        turn: { schemaVersion: 1, stage: 'follow-up', speaker: 'alone', speechAct: 'reflect_and_ask', text: 'You shared a story. What stayed with you?', storyReference: 'a story', tentativeMeaning: null, safetyMode: 'normal' },
+      },
+      {
+        request: { id: 'close-2', message: 'The ending.', currentStage: 'follow-up', expectedStage: 'mirror', inputKind: 'follow_up_answer' },
+        turn: { schemaVersion: 1, stage: 'mirror', speaker: 'alone', speechAct: 'tentative_mirror', text: 'Maybe the ending mattered most. Is that close?', storyReference: 'the ending', tentativeMeaning: 'the ending mattered most', safetyMode: 'normal' },
+      },
+      {
+        request: { id: 'close-3', message: 'Yes.', currentStage: 'mirror', expectedStage: 'closure', inputKind: 'correction_or_confirmation' },
+        turn: { schemaVersion: 1, stage: 'closure', speaker: 'alone', speechAct: 'acknowledge_and_close', text: 'Thank you for confirming that. We can leave it here.', storyReference: 'your confirmation', tentativeMeaning: null, safetyMode: 'normal' },
+      },
+    ]
+
+    for (const { request, turn } of steps) {
+      const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+      const turnPromise = waitForMessageType(socket, 'encounter_turn')
+      socket.send(JSON.stringify({ type: 'encounter_prompt', request }))
+      await acceptedPromise
+      harness.emit({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify(turn) },
+      })
+      harness.emit({ type: 'agent_settled' })
+      await turnPromise
+    }
+
+    const errorPromise = waitForMessageType(socket, 'assistant_error')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: { id: 'after-close', message: 'Continue.', currentStage: 'closure' },
+    }))
+    assert.deepEqual(await errorPromise, {
+      type: 'assistant_error',
+      errorKind: 'request',
+      message: 'This encounter is already closed.',
+    })
+    assert.equal(harness.promptCount(), 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('waits for Pi to settle after timeout before allowing retry', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'timeout-1',
+        message: 'I keep replaying the meeting.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    await acceptedPromise
+
+    const earlyErrorPromise = waitForMessageType(socket, 'assistant_error', 20)
+    assert.equal(harness.fireTurnTimeout(), true)
+    assert.equal(harness.abortCount(), 1)
+    assert.equal(await earlyErrorPromise, null)
+
+    const errorPromise = waitForMessageType(socket, 'assistant_error')
+    harness.emit({ type: 'agent_settled' })
+    assert.deepEqual(await errorPromise, {
+      type: 'assistant_error',
+      errorKind: 'timeout',
+      message: 'Alone took too long to respond. Retry or close this encounter.',
+    })
+
+    const retryAccepted = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'timeout-retry',
+        message: 'I keep replaying the meeting.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    assert.deepEqual(await retryAccepted, { type: 'prompt_accepted', id: 'timeout-retry' })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('waits for Pi to settle before confirming encounter cancellation', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'cancel-1',
+        message: 'I want to stop here.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+        history: [],
+      },
+    }))
+    await acceptedPromise
+
+    const cancelledPromise = waitForMessageType(socket, 'encounter_cancelled')
+    socket.send(JSON.stringify({ type: 'abort' }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(harness.abortCount(), 1)
+    harness.emit({ type: 'agent_settled' })
+
+    assert.deepEqual(await cancelledPromise, {
+      type: 'encounter_cancelled',
+      id: 'cancel-1',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+test('fails closed when Pi never settles after encounter cancellation', async () => {
+  const harness = await createChatHarness({ settleImmediately: false })
+  try {
+    const socket = await harness.connect('localhost')
+    const acceptedPromise = waitForMessageType(socket, 'prompt_accepted')
+    socket.send(JSON.stringify({
+      type: 'encounter_prompt',
+      request: {
+        id: 'cancel-stuck',
+        message: 'I want to stop here.',
+        currentStage: 'story',
+        expectedStage: 'follow-up',
+        inputKind: 'story',
+      },
+    }))
+    await acceptedPromise
+
+    socket.send(JSON.stringify({ type: 'abort' }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const errorPromise = waitForMessageType(socket, 'assistant_error')
+    assert.equal(harness.fireTurnTimeout(), true)
+    assert.deepEqual(await errorPromise, {
+      type: 'assistant_error',
+      errorKind: 'settlement',
+      message: 'Pi did not finish stopping. Reset to start a new encounter.',
+    })
+    await harness.waitForSessionClose()
+    assert.equal(harness.closedSessionCount(), 1)
+  } finally {
+    await harness.close()
+  }
+})
 
 test('rejects non-loopback hosts even when Origin matches Host', async () => {
   const harness = await createChatHarness()
