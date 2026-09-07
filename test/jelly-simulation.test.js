@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createJellySimulation, visualStateFor } from '../src/jelly-simulation.js'
+import { createJellySimulation, measureJellyContactProjection, sampleJellySurface, visualStateFor } from '../src/jelly-simulation.js'
 
 test('application stage mapping ignores content and prioritizes closed and pending states', () => {
   for (const [input, expected] of [
@@ -223,3 +223,221 @@ for (const reducedMotion of [false, true]) {
     assert.equal(sim.getState().needsFrame, false)
   })
 }
+
+test('local surface pull is immediate, bounded, and stronger at contact than across the body', () => {
+  const sim = createJellySimulation()
+  assert.equal(sim.grab(0, 0, .72, -.48), true)
+  sim.drag(.16, -.12)
+  const s = sim.step(1 / 144)
+  assert.deepEqual(s.deformation.anchor, { x: .72, y: -.48 })
+  assert.ok(Math.hypot(s.deformation.pull.x, s.deformation.pull.y) > 0)
+  assert.ok(Math.abs(s.deformation.pull.x) <= .2)
+  assert.ok(Math.abs(s.deformation.pull.y) <= .18)
+  const near = sampleJellySurface(s.deformation, .72, -.48)
+  const distal = sampleJellySurface(s.deformation, -.72, .48)
+  assert.ok(Math.hypot(near.x, near.y) > Math.hypot(distal.x, distal.y) * 4)
+  assert.ok(near.x > 0)
+})
+
+test('anchor rebase preserves the active bulge then moves it continuously across frame rates', () => {
+  const finals = []
+  for (const hz of [30, 60, 144]) {
+    const sim = createJellySimulation()
+    sim.grab(0, 0, -.75, .35)
+    sim.drag(.16, -.1)
+    for (let i = 0; i < Math.round(hz * .2); i++) sim.step(1 / hz)
+    const before = sim.getState().deformation
+    const oldSurface = sampleJellySurface(before, -.75, .35)
+    sim.rebase(.1, 0, .65, -.45)
+    const immediate = sim.getState().deformation
+    const immediateSurface = sampleJellySurface(immediate, -.75, .35)
+    assert.deepEqual(immediate.anchor, before.anchor)
+    assert.deepEqual(immediate.pull, before.pull)
+    assert.deepEqual(immediate.recoil, before.recoil)
+    assert.deepEqual(immediate.targetAnchor, { x: .65, y: -.45 })
+    assert.deepEqual(immediateSurface, oldSurface)
+    const first = sim.step(1 / hz).deformation
+    const firstSurface = sampleJellySurface(first, -.75, .35)
+    assert.ok(Math.hypot(first.anchor.x - before.anchor.x, first.anchor.y - before.anchor.y) < .45)
+    assert.ok(Math.hypot(firstSurface.x, firstSurface.y) > Math.hypot(oldSurface.x, oldSurface.y) * .7)
+    for (let i = 1; i < hz * 2; i++) sim.step(1 / hz)
+    const settled = sim.getState().deformation
+    assert.ok(Math.hypot(settled.anchor.x - .65, settled.anchor.y + .45) < .0001)
+    finals.push(settled.anchor)
+    sim.setState('closure')
+    let steps = 0
+    while (sim.getState().needsFrame && steps++ < hz * 10) sim.step(1 / hz)
+    assert.equal(sim.getState().interactionMode, 'locked')
+    assert.equal(sim.getState().needsFrame, false)
+  }
+  for (const anchor of finals) assert.ok(Math.hypot(anchor.x - finals[0].x, anchor.y - finals[0].y) < .0001)
+})
+
+test('quick regrab retargets active recoil without relocating the existing bulge', () => {
+  for (const hz of [30, 60, 144]) {
+    const sim = createJellySimulation()
+    sim.grab(0, 0, -.7, .4)
+    sim.drag(.16, -.1)
+    for (let i = 0; i < Math.round(hz * .2); i++) sim.step(1 / hz)
+    sim.release(.4, -.2)
+    sim.step(1 / hz)
+    const before = sim.getState().deformation
+    const oldSurface = sampleJellySurface(before, before.anchor.x, before.anchor.y)
+    assert.ok(before.active)
+    assert.equal(sim.grab(.04, -.02, .72, -.46), true)
+    const immediate = sim.getState().deformation
+    assert.deepEqual(immediate.anchor, before.anchor)
+    assert.deepEqual(immediate.pull, before.pull)
+    assert.deepEqual(immediate.recoil, before.recoil)
+    assert.deepEqual(immediate.targetAnchor, { x: .72, y: -.46 })
+    assert.deepEqual(sampleJellySurface(immediate, before.anchor.x, before.anchor.y), oldSurface)
+    const first = sim.step(1 / hz).deformation
+    const firstSurface = sampleJellySurface(first, before.anchor.x, before.anchor.y)
+    assert.ok(Math.hypot(firstSurface.x, firstSurface.y) > Math.hypot(oldSurface.x, oldSurface.y) * .65)
+    for (let i = 1; i < hz * 2; i++) sim.step(1 / hz)
+    const settled = sim.getState().deformation
+    assert.ok(Math.hypot(settled.anchor.x - .72, settled.anchor.y + .46) < .0001)
+  }
+  const settled = createJellySimulation()
+  assert.equal(settled.grab(0, 0, .52, -.31), true)
+  assert.deepEqual(settled.getState().deformation.anchor, { x: .52, y: -.31 })
+  assert.deepEqual(settled.getState().deformation.targetAnchor, { x: .52, y: -.31 })
+})
+
+test('moving grab gives local deformation a visible share of projected contact motion', () => {
+  const sim = createJellySimulation()
+  sim.grab(0, 0, .68, .32)
+  sim.drag(.16, -.1)
+  let s
+  for (let i = 0; i < 6; i++) s = sim.step(1 / 60)
+  const projected = measureJellyContactProjection(s, .68, .32, 1.25)
+  assert.ok(projected.localShare >= .38, `local projected share ${projected.localShare}`)
+  assert.ok(projected.body >= .015 && projected.body <= .14, `bounded projected body follow ${projected.body}`)
+  assert.ok(projected.total > projected.body)
+  const near = sampleJellySurface(s.deformation, .68, .32)
+  assert.ok(Math.abs(near.x) <= .2 && Math.abs(near.y) <= .18)
+})
+
+test('local pull preserves volume with bounded distal counter-deformation', () => {
+  const sim = createJellySimulation()
+  sim.grab(0, 0, -.65, .55)
+  sim.drag(.18, .14)
+  for (let i = 0; i < 20; i++) sim.step(1 / 120)
+  const d = sim.getState().deformation
+  const near = sampleJellySurface(d, -.65, .55)
+  const distal = sampleJellySurface(d, .9, -.9)
+  assert.ok(d.compensation > 0 && d.compensation <= .2)
+  assert.ok(d.volumeScale >= .9 && d.volumeScale < 1)
+  assert.ok(near.x > 0 && distal.x < 0)
+  assert.ok(Math.hypot(distal.x, distal.y) < Math.hypot(near.x, near.y))
+})
+
+test('released local pull recoils without snapping and converges across frame rates', () => {
+  const finals = []
+  for (const hz of [30, 60, 144]) {
+    const sim = createJellySimulation()
+    sim.grab(0, 0, .5, .25)
+    sim.drag(.17, .1)
+    for (let i = 0; i < Math.round(hz * .2); i++) sim.step(1 / hz)
+    const held = sim.getState().deformation.pull.x
+    sim.release()
+    const first = sim.step(1 / hz).deformation.pull.x
+    assert.ok(Math.abs(first) > .001 && Math.abs(first - held) < Math.abs(held))
+    let crossed = false
+    for (let i = 0; i < hz * 4; i++) {
+      const pull = sim.step(1 / hz).deformation.pull.x
+      if (pull * held < 0) crossed = true
+      assert.ok(Number.isFinite(pull) && Math.abs(pull) <= .2)
+    }
+    assert.equal(crossed, true)
+    finals.push(sim.getState().deformation.pull.x)
+  }
+  for (const value of finals) assert.ok(Math.abs(value) < .0001)
+})
+
+test('extreme and invalid local deformation inputs remain finite and bounded', () => {
+  const sim = createJellySimulation()
+  for (const values of [
+    [Infinity, NaN, Infinity, -Infinity],
+    [1e300, -1e300, 1e300, -1e300],
+    [-1e300, 1e300, -1e300, 1e300],
+  ]) {
+    sim.grab(...values)
+    sim.drag(values[0], values[1])
+    const s = sim.step(Infinity)
+    const sampled = sampleJellySurface(s.deformation, values[2], values[3])
+    for (const value of [
+      s.deformation.anchor.x, s.deformation.anchor.y,
+      s.deformation.pull.x, s.deformation.pull.y,
+      s.deformation.recoil.x, s.deformation.recoil.y,
+      s.deformation.compensation, s.deformation.volumeScale,
+      sampled.x, sampled.y, sampled.weight,
+    ]) assert.ok(Number.isFinite(value))
+    assert.ok(Math.abs(sampled.x) <= .24 && Math.abs(sampled.y) <= .24)
+    sim.cancel()
+  }
+})
+
+test('downward boundary impact transfers a bounded impulse into squash and recoil', () => {
+  const sim = createJellySimulation()
+  sim.grab(0, 0, 0, -.75)
+  sim.drag(0, .14)
+  for (let i = 0; i < 90; i++) sim.step(1 / 120)
+  sim.release(0, 1.5)
+  let peakImpact = 0
+  let minimumSquash = 0
+  let upwardRecoil = 0
+  for (let i = 0; i < 180; i++) {
+    const s = sim.step(1 / 120)
+    peakImpact = Math.max(peakImpact, s.groundImpact)
+    minimumSquash = Math.min(minimumSquash, s.squash)
+    upwardRecoil = Math.min(upwardRecoil, s.deformation.recoil.y)
+  }
+  assert.ok(peakImpact > .1 && peakImpact <= 1)
+  assert.ok(minimumSquash < -.01)
+  assert.ok(upwardRecoil < 0)
+})
+
+test('face poses and idle blink are deterministic, bounded, and never reinterpret grabbing as sadness', () => {
+  const a = createJellySimulation()
+  const b = createJellySimulation()
+  let blinkPeak = 0
+  for (let i = 0; i < 600; i++) {
+    const faceA = a.step(1 / 60).face
+    const faceB = b.step(1 / 60).face
+    assert.deepEqual(faceA, faceB)
+    assert.ok(faceA.blink >= 0 && faceA.blink <= 1)
+    assert.ok(faceA.eyeOpen >= .15 && faceA.eyeOpen <= 1.1)
+    blinkPeak = Math.max(blinkPeak, faceA.blink)
+  }
+  assert.ok(blinkPeak > .5)
+  a.grab(0, 0, 0, 0)
+  assert.equal(a.getState().face.pose, 'idle')
+  assert.equal(a.getState().face.mouthCurve, 0)
+  a.setState('listening')
+  assert.equal(a.getState().face.pose, 'listening')
+  a.setState('correction')
+  assert.equal(a.getState().face.pose, 'correction')
+  assert.ok(Math.abs(a.getState().face.mouthTilt) > 0)
+})
+
+test('reduced motion disables blink and closure settles deformation without reopening interaction', () => {
+  const sim = createJellySimulation({ reducedMotion: true })
+  sim.grab(0, 0, .6, -.4)
+  sim.drag(.18, .14)
+  for (let i = 0; i < 30; i++) assert.equal(sim.step(1 / 60).face.blink, 0)
+  assert.ok(Math.hypot(sim.getState().deformation.pull.x, sim.getState().deformation.pull.y) <= .08)
+  sim.setState('closure')
+  const closurePose = sim.getState().face
+  assert.equal(closurePose.pose, 'closure')
+  assert.ok(closurePose.eyeOpen < .6)
+  assert.equal(sim.grab(0, 0, 0, 0), false)
+  sim.setState('idle')
+  let steps = 0
+  while (sim.getState().needsFrame && steps++ < 600) sim.step(1 / 60)
+  const settled = sim.getState()
+  assert.equal(settled.interactionMode, 'locked')
+  assert.equal(settled.visualState, 'closure')
+  assert.ok(Math.hypot(settled.deformation.pull.x, settled.deformation.pull.y) < .0001)
+  assert.equal(settled.needsFrame, false)
+})

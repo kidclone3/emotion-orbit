@@ -26,11 +26,18 @@ export function createJellyGestures(sim) {
     const values = pair()
     return { x: values.reduce((v, p) => v + p.x, 0) / values.length, y: values.reduce((v, p) => v + p.y, 0) / values.length }
   }
+  const anchorCenter = () => {
+    const values = pair()
+    return {
+      x: values.reduce((v, p) => v + p.anchorX, 0) / values.length,
+      y: values.reduce((v, p) => v + p.anchorY, 0) / values.length,
+    }
+  }
   const distance = () => { const [a, b] = pair(); return b ? Math.hypot(a.x - b.x, a.y - b.y) : 0 }
   const rebase = t => {
     history.clear()
-    const c = center()
-    sim.rebase(c.x, c.y)
+    const c = center(), anchor = anchorCenter()
+    sim.rebase(c.x, c.y, anchor.x, anchor.y)
     history.add(c.x, c.y, t)
     pinchDistance = distance()
     pinchScale = sim.getState().targetScale
@@ -38,11 +45,13 @@ export function createJellyGestures(sim) {
   return {
     getState: () => ({ activePointerCount: pointers.size, pinch: { active: pointers.size === 2, distance: pinchDistance, startScale: pinchScale } }),
     has: id => pointers.has(id),
-    down(id, type, x, y, t) {
+    down(id, type, x, y, t, localX = 0, localY = 0) {
       if (pointers.has(id) || pointers.size >= 2 || ![x, y, t].every(Number.isFinite) || sim.getState().interactionMode === 'locked') return false
       if (pointers.size && (type !== 'touch' || pair()[0].type !== 'touch')) return false
-      if (!pointers.size && !sim.grab(x, y)) return false
-      pointers.set(id, { type, x, y })
+      const anchorX = Math.max(-1, Math.min(1, Number.isFinite(localX) ? localX : 0))
+      const anchorY = Math.max(-1, Math.min(1, Number.isFinite(localY) ? localY : 0))
+      if (!pointers.size && !sim.grab(x, y, anchorX, anchorY)) return false
+      pointers.set(id, { type, x, y, anchorX, anchorY })
       if (pointers.size === 2) rebase(t)
       else { history.clear(); history.add(x, y, t) }
       return true
@@ -67,7 +76,7 @@ export function createJellyGestures(sim) {
 }
 
 // Pointer capture and listener ownership live here, separate from gesture mathematics.
-export function bindJellyInput(button, host, sim, wake) {
+export function bindJellyInput(button, host, sim, wake, resolveSurfaceAnchor) {
   const gestures = createJellyGestures(sim)
   const captures = new Set()
   const removers = []
@@ -81,6 +90,20 @@ export function bindJellyInput(button, host, sim, wake) {
     // Equal units in both axes preserve physical pinch distance on rectangular stages.
     return { x: (e.clientX - rect.left - rect.width / 2) / rect.height, y: (e.clientY - rect.top - rect.height / 2) / rect.height }
   }
+  const boundAnchor = value => Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0))
+  const surfacePoint = e => {
+    if (typeof resolveSurfaceAnchor === 'function') {
+      try {
+        const resolved = resolveSurfaceAnchor(e.clientX, e.clientY)
+        if (Number.isFinite(resolved?.x) && Number.isFinite(resolved?.y)) {
+          return { x: boundAnchor(resolved.x), y: boundAnchor(resolved.y) }
+        }
+      } catch {}
+    }
+    const rect = button.getBoundingClientRect()
+    const width = Math.max(1, rect.width), height = Math.max(1, rect.height)
+    return { x: boundAnchor((e.clientX - rect.left) / width * 2 - 1), y: boundAnchor(1 - (e.clientY - rect.top) / height * 2) }
+  }
   const release = id => {
     if (!captures.delete(id)) return
     capturesReleased++
@@ -90,7 +113,8 @@ export function bindJellyInput(button, host, sim, wake) {
   on('pointerdown', e => {
     if (e.button !== 0) return
     const p = point(e)
-    if (!gestures.down(e.pointerId, e.pointerType, p.x, p.y, e.timeStamp)) return
+    const local = surfacePoint(e)
+    if (!gestures.down(e.pointerId, e.pointerType, p.x, p.y, e.timeStamp, local.x, local.y)) return
     try { button.setPointerCapture(e.pointerId); captures.add(e.pointerId); capturesAcquired++ }
     catch { cancel(); return }
     button.focus({ preventScroll: true })

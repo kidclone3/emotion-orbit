@@ -20,7 +20,7 @@ export class WebGPURenderer {
     this.liveResources++ // The pending backend continuation acquires resources.
     this.compiling = false
   }
-  render() {}
+  render(scene, camera) { this.scene = scene; this.camera = camera }
   dispose() { this.disposals++; this.liveResources = 0 }
 }
 

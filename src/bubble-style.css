@@ -201,8 +201,53 @@ h1 em{color:#d5d4c6;font-family:Georgia,serif;font-weight:400}
 .alone-jelly{position:absolute;z-index:2;left:57%;top:55%;width:min(42vw,530px);height:min(43vh,390px);transform:translate(-50%,-50%);pointer-events:none}
 .alone-jelly canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .jelly-shadow{position:absolute;left:22%;right:19%;bottom:11%;height:10%;border-radius:50%;background:rgba(3,12,3,.55);filter:blur(13px);box-shadow:0 0 35px rgba(147,228,78,.16)}
-.jelly-static{position:absolute;inset:17% 18% 20%;border-radius:38% 32% 36% 29% / 30% 37% 32% 38%;transform:rotate(-4deg);background:radial-gradient(ellipse at 24% 15%,#f0ffd3 0,rgba(235,255,210,.6) 2%,transparent 12%),radial-gradient(ellipse at 78% 78%,rgba(185,255,122,.55),transparent 38%),linear-gradient(120deg,rgba(185,255,110,.78),rgba(41,172,45,.5) 44%,rgba(11,74,35,.8));border:1px solid rgba(210,255,153,.7);box-shadow:inset 5px 1px 9px rgba(235,255,210,.65),inset -6px -8px 16px rgba(15,68,12,.7),0 10px 18px rgba(0,0,0,.24)}
-.alone-jelly[data-ready=true] .jelly-static{display:none}
+.jelly-static-form{position:absolute;inset:0;transform-origin:50% 56%}
+.jelly-static{position:absolute;z-index:2;inset:17% 18% 20%;overflow:hidden;border-radius:38% 32% 36% 29% / 30% 37% 32% 38%;transform:rotate(-4deg);background:radial-gradient(ellipse at 24% 15%,#f0ffd3 0,rgba(235,255,210,.6) 2%,transparent 12%),radial-gradient(ellipse at 78% 78%,rgba(185,255,122,.55),transparent 38%),linear-gradient(120deg,rgba(185,255,110,.78),rgba(41,172,45,.5) 44%,rgba(11,74,35,.8));border:1px solid rgba(210,255,153,.7);box-shadow:inset 5px 1px 9px rgba(235,255,210,.65),inset -6px -8px 16px rgba(15,68,12,.7),0 10px 18px rgba(0,0,0,.24)}
+.jelly-static::before{content:"";position:absolute;left:30%;top:34%;width:40%;height:16%;background:radial-gradient(ellipse 10% 34% at 22% 50%,#123d24 0 90%,transparent 100%),radial-gradient(ellipse 10% 34% at 78% 50%,#123d24 0 90%,transparent 100%);opacity:.88}
+.jelly-static::after{content:"";position:absolute;left:40.5%;top:55%;width:19%;height:8%;border-bottom:4px solid #123d24;border-radius:0 0 50% 50%;opacity:.86}
+.jelly-static-limb{position:absolute;z-index:1;display:block;overflow:hidden;background:radial-gradient(ellipse at 28% 18%,rgba(240,255,211,.82),transparent 30%),linear-gradient(125deg,rgba(185,255,110,.76),rgba(38,158,43,.58) 52%,rgba(11,74,35,.82));border:1px solid rgba(210,255,153,.62);box-shadow:inset 3px 1px 6px rgba(235,255,210,.48),inset -4px -5px 9px rgba(15,68,12,.58),0 7px 11px rgba(0,0,0,.18)}
+.jelly-static-arm{top:44%;width:20%;height:10%;border-radius:48% 60% 62% 48% / 48% 58% 60% 50%}
+.jelly-static-arm-left{left:10%;transform:rotate(15deg)}
+.jelly-static-arm-right{right:9%;transform:scaleX(-1) rotate(12deg)}
+.jelly-static-leg{bottom:11%;width:12%;height:22%;border-radius:45% 45% 58% 62% / 40% 42% 64% 68%}
+.jelly-static-leg-left{left:31%;transform:rotate(7deg)}
+.jelly-static-leg-right{right:29%;transform:rotate(-6deg)}
+.jelly-loading,.jelly-loading *{pointer-events:none}
+.jelly-loading .jelly-shadow{opacity:.72;animation:jelly-forming-shadow 2.4s ease-in-out infinite}
+.jelly-loading .jelly-static-form{animation:jelly-forming-body 2.4s cubic-bezier(.45,.05,.55,.95) infinite}
+.jelly-loading .jelly-static{opacity:.72;filter:saturate(.78) blur(.35px)}
+.jelly-loading .jelly-static-limb{overflow:hidden;opacity:.68;filter:saturate(.78) blur(.25px)}
+.jelly-loading .jelly-static::before{z-index:1;opacity:.3;filter:blur(1.3px)}
+.jelly-loading .jelly-static::after{z-index:1;opacity:.24;filter:blur(1px)}
+.jelly-forming-shimmer{position:absolute;z-index:0;inset:-18% -45%;background:linear-gradient(108deg,transparent 36%,rgba(235,255,210,.3) 48%,rgba(185,255,122,.12) 53%,transparent 64%);transform:translateX(-28%);animation:jelly-forming-shimmer 2.4s ease-in-out infinite}
+@keyframes jelly-forming-body{
+  0%,100%{opacity:.62;transform:translateY(1.5%) rotate(-5deg) scale(.96,.94)}
+  50%{opacity:.84;transform:translateY(-.5%) rotate(-3deg) scale(1,.98)}
+}
+@keyframes jelly-forming-shadow{
+  0%,100%{opacity:.52;transform:scale(.92,.86)}
+  50%{opacity:.72;transform:scale(1.02,.96)}
+}
+@keyframes jelly-forming-shimmer{
+  0%,12%{opacity:0;transform:translateX(-28%)}
+  50%{opacity:.8}
+  88%,100%{opacity:0;transform:translateX(28%)}
+}
+@media(prefers-reduced-motion:reduce){
+  .jelly-loading .jelly-static-form,.jelly-loading .jelly-shadow,.jelly-forming-shimmer{animation:none}
+  .jelly-loading .jelly-shadow{opacity:.62}
+  .jelly-loading .jelly-static{opacity:.76}
+  .jelly-loading .jelly-static-limb{opacity:.72}
+  .jelly-forming-shimmer{opacity:.14;transform:none}
+}
+@media(forced-colors:active){
+  .jelly-loading .jelly-shadow{background:CanvasText;box-shadow:none;filter:none;opacity:.22}
+  .jelly-loading .jelly-static,.jelly-loading .jelly-static-limb{background:Canvas;border:2px solid CanvasText;box-shadow:none;filter:none}
+  .jelly-loading .jelly-static::before{left:30%;top:34%;width:40%;height:16%;border-radius:0;background:radial-gradient(ellipse 10% 34% at 22% 50%,CanvasText 0 90%,transparent 100%),radial-gradient(ellipse 10% 34% at 78% 50%,CanvasText 0 90%,transparent 100%);box-shadow:none;filter:none;forced-color-adjust:none}
+  .jelly-loading .jelly-static::after{border-color:CanvasText;filter:none}
+  .jelly-forming-shimmer{display:none}
+}
+.alone-jelly[data-ready=true] .jelly-static-form{display:none}
 .jelly-poke{position:absolute;inset:20% 23% 23%;border:0;border-radius:38%;background:transparent;pointer-events:auto;cursor:grab;touch-action:none;-webkit-tap-highlight-color:transparent}
 .jelly-poke:focus-visible{outline:none}
 .jelly-debug{position:absolute;left:0;bottom:0;max-width:100%;padding:.4rem .6rem;color:#e4ffd0;background:#06110de6;white-space:pre;font:10px/1.5 monospace;pointer-events:none}

@@ -1,5 +1,5 @@
 import { bindJellyInput } from './jelly-input.js'
-import { createJellySimulation, visualStateFor } from './jelly-simulation.js'
+import { createJellySimulation, JELLY_RENDER_VIEW, sampleJellySurface, visualStateFor } from './jelly-simulation.js'
 import { createJellyLifecycle, watchJellyDevice } from './jelly-lifecycle.js'
 
 // This entire module is loaded only by the opt-in role-play entrypoint.
@@ -8,9 +8,10 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
   const simulation = createJellySimulation({ reducedMotion: media.matches })
   const host = document.createElement('div')
   host.className = 'alone-jelly'
-  host.innerHTML = '<div class="jelly-shadow" aria-hidden="true"></div><div class="jelly-static" aria-hidden="true"></div><button class="jelly-poke" type="button" aria-label="Gently move Alone. Drag to hold and release to throw. Wheel or pinch to resize; plus and minus change size, zero resets size."><span class="sr-only">Gently poke Alone</span></button>'
+  host.innerHTML = '<div class="jelly-shadow" aria-hidden="true"></div><div class="jelly-static-form" aria-hidden="true"><span class="jelly-static-limb jelly-static-arm jelly-static-arm-left"></span><span class="jelly-static-limb jelly-static-arm jelly-static-arm-right"></span><span class="jelly-static-limb jelly-static-leg jelly-static-leg-left"></span><span class="jelly-static-limb jelly-static-leg jelly-static-leg-right"></span><div class="jelly-static"></div></div><button class="jelly-poke" type="button" aria-label="Gently move Alone. Drag to hold and release to throw. Wheel or pinch to resize; plus and minus change size, zero resets size."><span class="sr-only">Gently poke Alone</span></button>'
   parent.append(host)
   const button = host.querySelector('button')
+  const staticForm = host.querySelector('.jelly-static-form')
   const staticBody = host.querySelector('.jelly-static')
   const shadow = host.querySelector('.jelly-shadow')
   const overlay = debug ? document.createElement('output') : null
@@ -19,6 +20,7 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
   let staticFrame = null, resourcesReleased = 0
   let frames = 0, resizeCount = 0, last = 0, dirty = true
   let width = 0, height = 0, drawCalls = 0, triangles = 0, frameMs = 0
+  let surfaceAnchorResolver = null
   const getState = () => ({
     enabled: true, renderer: backend === 'static' ? 'CSS' : 'WebGPURenderer', backend,
     ...simulation.getState(), ...input.getState(), resourcesReleased, fallback, failureReason, disposed, visible: !document.hidden,
@@ -35,7 +37,7 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
     }
     const h = host.clientHeight
     const transform = `translate(${s.position.x * h}px, ${s.position.y * h}px) scale(${s.scale})`
-    staticBody.style.transform = transform
+    staticForm.style.transform = transform
     staticBody.style.filter = `brightness(${1 + s.optics.value})`
     // A small relative lag stays attached to the body; scale suggests lift, not camera travel.
     shadow.style.transform = `translate(${(s.position.x + (s.optics.x - s.position.x) * .15) * h}px, ${s.position.y * h}px) scale(${s.scale * (1 - (s.scale - 1) * .25)}, ${s.scale * (1 + s.optics.pressure * .12)})`
@@ -59,7 +61,7 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
     if (backend === 'static' && !document.hidden && staticFrame === null) staticFrame = requestAnimationFrame(staticTick)
     else lifecycle.wake()
   }
-  const input = bindJellyInput(button, host, simulation, wake)
+  const input = bindJellyInput(button, host, simulation, wake, (x, y) => surfaceAnchorResolver?.(x, y))
 
   const lifecycle = createJellyLifecycle({
     schedule: requestAnimationFrame,
@@ -69,11 +71,12 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
       if (scope.cancelled) return null
       const owned = []
       const own = value => { if (scope.cancelled) value.dispose(); else owned.push(value); return value }
-      let renderer, canvas, unwatchDevice, initialized = false, released = false
+      let renderer, canvas, unwatchDevice, resolveSurface, initialized = false, released = false
       let pendingRendererWork = false, releaseRequested = false
       const release = () => {
         if (released) return
         releaseRequested = true
+        if (surfaceAnchorResolver === resolveSurface) surfaceAnchorResolver = null
         unwatchDevice?.()
         canvas?.removeEventListener('webglcontextlost', lost)
         canvas?.remove()
@@ -119,9 +122,10 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
         renderer.toneMapping = T.ACESFilmicToneMapping
         renderer.toneMappingExposure = 1.1
         const scene = new T.Scene()
-        const camera = new T.PerspectiveCamera(34, 1, .1, 30)
-        camera.position.set(0, .45, 6.3)
-        camera.lookAt(0, -.05, 0)
+        const camera = new T.PerspectiveCamera(JELLY_RENDER_VIEW.fov, 1, .1, 30)
+        camera.position.set(0, JELLY_RENDER_VIEW.cameraY, JELLY_RENDER_VIEW.cameraZ)
+        camera.lookAt(0, JELLY_RENDER_VIEW.targetY, 0)
+        const viewHeight = JELLY_RENDER_VIEW.viewHeight
 
         // A procedural studio probe creates long, soft highlights, not point-light dots.
         const probe = document.createElement('canvas')
@@ -179,26 +183,174 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
           base[i * 3 + 1] = round(y) * .86 + .11 * Math.sin(x * 3 + z * 2) * (.5 + y * .5)
           base[i * 3 + 2] = round(z) * .82 * (1 + .035 * Math.sin(y * 4 + x * 2))
         }
+        geometry.computeBoundingSphere()
+        geometry.boundingSphere.radius = 2
         const mesh = new T.Mesh(geometry, material)
-        mesh.rotation.set(.08, -.36, -.055)
+        mesh.name = 'jelly-body'
+        mesh.rotation.set(JELLY_RENDER_VIEW.rotationX, JELLY_RENDER_VIEW.rotationY, JELLY_RENDER_VIEW.rotationZ)
+        const limbGroup = new T.Group()
+        limbGroup.name = 'jelly-limbs'
+        const limbAxis = new T.Vector3(0, -1, 0)
+        const limbSpecs = [
+          { name: 'jelly-arm-left', role: 'arm', side: -1, root: [-.94, -.08, .42], direction: [-.94, -.2, .5], radius: .115, length: .36, bend: .035, tipWidth: .66, tipDepth: .5 },
+          { name: 'jelly-arm-right', role: 'arm', side: 1, root: [.95, -.06, .18], direction: [.92, -.18, .14], radius: .115, length: .34, bend: .03, tipWidth: .66, tipDepth: .5 },
+          { name: 'jelly-leg-left', role: 'leg', side: -1, root: [-.4, -.72, .12], direction: [-.18, -.93, .22], radius: .13, length: .28, bend: .02, tipWidth: .36, tipDepth: .62 },
+          { name: 'jelly-leg-right', role: 'leg', side: 1, root: [.4, -.73, .12], direction: [.2, -.93, .26], radius: .13, length: .28, bend: .018, tipWidth: .36, tipDepth: .62 },
+        ]
+        const limbs = limbSpecs.map(spec => {
+          const limbGeometry = own(new T.CapsuleGeometry(spec.radius, spec.length, 5, 12))
+          const limbPositions = limbGeometry.attributes.position
+          const halfLength = spec.length * .5 + spec.radius
+          const totalLength = halfLength * 2
+          for (let i = 0; i < limbPositions.count; i++) {
+            const x = limbPositions.getX(i), y = limbPositions.getY(i), z = limbPositions.getZ(i)
+            const t = Math.max(0, Math.min(1, (halfLength - y) / totalLength))
+            const tipT = Math.max(0, Math.min(1, (t - .5) * 2))
+            const tip = tipT * tipT * (3 - 2 * tipT)
+            const bend = Math.sin(Math.PI * t) * spec.bend * spec.side
+            const toe = spec.role === 'leg' ? tip * .13 : 0
+            limbPositions.setXYZ(
+              i,
+              x * (1 + tip * spec.tipWidth) + bend,
+              y - halfLength + .055,
+              z * (1 + tip * spec.tipDepth) + toe,
+            )
+          }
+          limbPositions.needsUpdate = true
+          limbGeometry.computeVertexNormals()
+          limbGeometry.computeBoundingBox()
+          limbGeometry.computeBoundingSphere()
+          const limb = new T.Mesh(limbGeometry, material)
+          limb.name = spec.name
+          const restRoot = new T.Vector3(...spec.root)
+          const restDirection = new T.Vector3(...spec.direction).normalize()
+          const direction = new T.Vector3()
+          limb.quaternion.setFromUnitVectors(limbAxis, restDirection)
+          limbGroup.add(limb)
+          return { ...spec, mesh: limb, geometry: limbGeometry, restRoot, restDirection, direction }
+        })
+        mesh.add(limbGroup)
+        const face = new T.Group()
+        face.name = 'jelly-face'
+        const faceMaterial = own(new T.MeshPhysicalMaterial({
+          color: 0x123d24, roughness: .24, metalness: 0,
+          clearcoat: .9, clearcoatRoughness: .16,
+          transmission: .12, thickness: .08, ior: 1.34,
+          transparent: true, opacity: .82, depthWrite: false,
+        }))
+        const eyeGeometry = own(new T.SphereGeometry(.105, 18, 14))
+        const mouthGeometry = own(new T.TorusGeometry(.19, .03, 10, 28, Math.PI))
+        const leftEye = new T.Mesh(eyeGeometry, faceMaterial)
+        leftEye.name = 'jelly-eye-left'; leftEye.userData.faceRole = 'eye'; leftEye.renderOrder = 2
+        const rightEye = new T.Mesh(eyeGeometry, faceMaterial)
+        rightEye.name = 'jelly-eye-right'; rightEye.userData.faceRole = 'eye'; rightEye.renderOrder = 2
+        const mouth = new T.Mesh(mouthGeometry, faceMaterial)
+        mouth.name = 'jelly-mouth'; mouth.userData.faceRole = 'mouth'; mouth.renderOrder = 2
+        face.add(leftEye, rightEye, mouth)
+        mesh.add(face)
         scene.add(mesh)
+        const faceAnchors = [
+          { mesh: leftEye, x: -.06, y: .12, z: .84 },
+          { mesh: rightEye, x: .58, y: .12, z: .8 },
+          { mesh: mouth, x: .26, y: -.17, z: .81 },
+        ]
         const projected = new T.Vector3()
-        const update = s => {
-          const stretch = 1 + s.squash
+        const deformed = new Float64Array(3)
+        const surfaceOffset = { x: 0, y: 0, weight: 0 }
+        const raycaster = new T.Raycaster()
+        const pointerNdc = new T.Vector2()
+        const localHit = new T.Vector3()
+        const triangleA = new T.Vector3(), triangleB = new T.Vector3(), triangleC = new T.Vector3()
+        const barycentric = new T.Vector3()
+        const hitTriangle = new T.Triangle()
+        const rayHits = []
+        const resolvedAnchor = { x: 0, y: 0 }
+        resolveSurface = (clientX, clientY) => {
+          if (released || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null
+          const rect = host.getBoundingClientRect()
+          if (!(rect.width > 0 && rect.height > 0)) return null
+          pointerNdc.set((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2)
+          mesh.updateMatrixWorld()
+          camera.updateMatrixWorld()
+          raycaster.setFromCamera(pointerNdc, camera)
+          rayHits.length = 0
+          raycaster.intersectObject(mesh, false, rayHits)
+          const hit = rayHits[0]
+          if (!hit?.face) return null
+          localHit.copy(hit.point)
+          mesh.worldToLocal(localHit)
+          triangleA.fromBufferAttribute(positions, hit.face.a)
+          triangleB.fromBufferAttribute(positions, hit.face.b)
+          triangleC.fromBufferAttribute(positions, hit.face.c)
+          hitTriangle.set(triangleA, triangleB, triangleC).getBarycoord(localHit, barycentric)
+          if (![barycentric.x, barycentric.y, barycentric.z].every(Number.isFinite)) return null
+          const a = hit.face.a * 3, b = hit.face.b * 3, c = hit.face.c * 3
+          const restX = base[a] * barycentric.x + base[b] * barycentric.y + base[c] * barycentric.z
+          const restY = base[a + 1] * barycentric.x + base[b + 1] * barycentric.y + base[c + 1] * barycentric.z
+          resolvedAnchor.x = Math.max(-1, Math.min(1, restX / 1.13))
+          resolvedAnchor.y = Math.max(-1, Math.min(1, restY / .97))
+          return resolvedAnchor
+        }
+        const deformPoint = (target, x, y, z, s) => {
+          const stretch = Math.max(.7, 1 + s.squash)
           const lateral = 1 / Math.sqrt(stretch)
+          const ripple = s.wobble * Math.sin(y * 4 + x * 2 + s.time * 2)
+          sampleJellySurface(s.deformation, x / 1.13, y / .97, surfaceOffset)
+          const volume = s.deformation.volumeScale
+          target[0] = (x * lateral + s.lean * y + ripple) * volume + surfaceOffset.x
+          target[1] = (y * stretch + ripple * .5) * volume - surfaceOffset.y
+          target[2] = (z * lateral + ripple) * volume
+        }
+        const update = s => {
           for (let i = 0; i < positions.count; i++) {
             const x = base[i * 3], y = base[i * 3 + 1], z = base[i * 3 + 2]
-            const ripple = s.wobble * Math.sin(y * 4 + x * 2 + s.time * 2)
-            positions.setXYZ(i, x * lateral + s.lean * y + ripple, y * stretch + ripple * .5, z * lateral + ripple)
+            deformPoint(deformed, x, y, z, s)
+            positions.setXYZ(i, deformed[0], deformed[1], deformed[2])
           }
+          for (let i = 0; i < faceAnchors.length; i++) {
+            const anchor = faceAnchors[i]
+            deformPoint(deformed, anchor.x, anchor.y, anchor.z, s)
+            anchor.mesh.position.set(deformed[0], deformed[1], deformed[2])
+          }
+          const limbSway = s.reducedMotion ? 0 : Math.max(-.14, Math.min(.14, s.lean * .55 + s.wobble * 3 + s.velocity.x * .018))
+          const limbSettle = s.reducedMotion ? 0 : Math.max(-.1, Math.min(.1, s.groundImpact * .08 - s.squash * .12))
+          for (const limb of limbs) {
+            deformPoint(deformed, limb.restRoot.x, limb.restRoot.y, limb.restRoot.z, s)
+            limb.mesh.position.set(deformed[0], deformed[1], deformed[2])
+            limb.direction.copy(limb.restDirection)
+            if (limb.role === 'arm') {
+              limb.direction.y -= limbSway * .32
+              limb.direction.z += limbSway * limb.side * .16
+            } else {
+              limb.direction.x += limbSway * limb.side * .12
+              limb.direction.z += limbSettle
+            }
+            limb.direction.normalize()
+            limb.mesh.quaternion.setFromUnitVectors(limbAxis, limb.direction)
+            const lengthScale = 1 + Math.max(-.08, Math.min(.08, s.squash * (limb.role === 'leg' ? -.16 : -.08) + s.groundImpact * .035))
+            const widthScale = 1 + Math.max(-.06, Math.min(.06, s.optics.pressure * .025 - s.squash * .04))
+            limb.mesh.scale.set(widthScale, lengthScale, widthScale)
+          }
+          leftEye.scale.set(1, s.face.eyeOpen, .38)
+          rightEye.scale.set(1, s.face.eyeOpen, .38)
+          mouth.scale.set(s.face.mouthWidth, .4 + s.face.mouthCurve, .65)
+          mouth.rotation.z = Math.PI + s.face.mouthTilt
           positions.needsUpdate = true
           geometry.computeVertexNormals()
-          const viewHeight = 2 * 6.3 * Math.tan(17 * Math.PI / 180)
           mesh.scale.setScalar(s.scale)
           mesh.position.x = s.position.x * viewHeight
           mesh.position.y = .91 * s.squash - s.position.y * viewHeight
           mesh.updateMatrixWorld()
           camera.updateMatrixWorld()
+          for (const limb of limbs) {
+            const limbPositions = limb.geometry.attributes.position
+            const limbUvs = limb.geometry.attributes.uv
+            for (let i = 0; i < limbPositions.count; i++) {
+              projected.fromBufferAttribute(limbPositions, i).applyMatrix4(limb.mesh.matrixWorld).project(camera)
+              limbUvs.setXY(i, projected.x * .5 + .5, projected.y * .5 + .5)
+            }
+            limbUvs.needsUpdate = true
+          }
           let minX = 1, minY = 1, maxX = -1, maxY = -1
           for (let i = 0; i < positions.count; i++) {
             projected.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld).project(camera)
@@ -238,6 +390,7 @@ export function mountJellyCharacter(parent, { debug = false } = {}) {
         pendingRendererWork = true
         try { await renderer.compileAsync(scene, camera) } finally { settleRendererWork() }
         if (scope.cancelled) return resource
+        surfaceAnchorResolver = resolveSurface
         host.prepend(canvas)
         return Object.assign(resource, { renderer, scene, camera, update, resize })
       } catch (error) { release(); throw error }
